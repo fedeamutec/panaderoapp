@@ -7,7 +7,7 @@ const THEMES = ['cursor', 'black', 'paper']
 
 function OAuthBridge() {
   useEffect(() => {
-    const target = new URL('http://localhost:3001/api/mercadolibre/callback')
+    const target = new URL('https://api.panaderoapp.com/api/mercadolibre/callback')
     for (const [key, value] of new URLSearchParams(window.location.search)) {
       target.searchParams.set(key, value)
     }
