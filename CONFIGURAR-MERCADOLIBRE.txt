@@ -1,0 +1,29 @@
+PANADERO — CONEXIÓN CON MERCADO LIBRE
+
+1) En esta carpeta ejecutá uno de estos archivos:
+   Mac:     crear-env.command
+   Windows: crear-env.bat
+
+2) Se creará un archivo oculto llamado .env.
+
+3) Abrilo con Visual Studio Code y reemplazá:
+   PEGAR_ACA_EL_CLIENT_SECRET_NUEVO
+   por tu Client Secret nuevo.
+
+4) No cambies estas líneas:
+   ML_CLIENT_ID=5126191536003002
+   ML_REDIRECT_URI=https://panaderoapp.com/oauth/callback
+
+5) En la terminal ejecutá:
+   npm install
+   npm run dev
+
+6) Antes de usar “Conectar cuenta”, hay que subir a panaderoapp.com
+   el archivo incluido en:
+   SUBIR-A-PANADEROAPP/oauth/callback/index.html
+
+IMPORTANTE
+- Nunca subas .env a GitHub.
+- Nunca compartas el Client Secret en capturas.
+- El archivo .env puede no verse en Finder porque empieza con punto.
+  En Mac podés mostrar archivos ocultos con Command + Shift + punto.

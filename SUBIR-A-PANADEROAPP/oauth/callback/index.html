@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <title>Conectando Mercado Libre — Panadero</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0b0b0b; color: #f4f4f4; }
+    main { width: min(480px, calc(100% - 32px)); padding: 28px; border: 1px solid #2a2a2a; border-radius: 14px; background: #121212; }
+    h1 { margin: 0 0 10px; font-size: 20px; }
+    p { margin: 0; color: #a8a8a8; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Conectando Mercado Libre…</h1>
+    <p>Volviendo a Panadero. Podés cerrar esta ventana cuando la aplicación se abra.</p>
+  </main>
+  <script>
+    const localCallback = new URL('http://localhost:3001/api/mercadolibre/callback');
+    const params = new URLSearchParams(window.location.search);
+    for (const [key, value] of params.entries()) localCallback.searchParams.set(key, value);
+    window.location.replace(localCallback.toString());
+  </script>
+</body>
+</html>
