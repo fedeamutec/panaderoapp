@@ -3,7 +3,7 @@ import Topbar from '../components/Topbar'
 import SalesTable, { formatCurrency } from '../components/SalesTable'
 import { sales as demoSales } from '../Data/Sales'
 
-const API_BASE = 'http://localhost:3001/api'
+const API_BASE = 'https://api.panaderoapp.com/api'
 
 const filters = [
   ['all', 'Todas'],
