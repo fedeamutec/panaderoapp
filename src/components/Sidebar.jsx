@@ -19,6 +19,9 @@ const themeLabels = {
 
 
 function Sidebar({
+  activeSection,
+  onSectionChange,
+  salesCount = 0,
   settingsOpen,
   onToggleSettings,
   theme,
@@ -52,17 +55,21 @@ function Sidebar({
 
       <nav className="sidebar-navigation" aria-label="Navegación principal">
         <span className="nav-label">Espacio de trabajo</span>
-        {mainItems.map(([icon, label], index) => (
+        {mainItems.map(([icon, label]) => {
+          const section = label === 'Facturas' ? 'facturas' : label === 'Inicio' || label === 'Ventas' ? 'ventas' : label.toLowerCase()
+          return (
           <button
-            className={`sidebar-item ${index === 0 ? 'active' : ''}`}
+            className={`sidebar-item ${activeSection === section ? 'active' : ''}`}
             type="button"
             key={label}
+            onClick={() => (section === 'ventas' || section === 'facturas') && onSectionChange(section)}
           >
             <span className="sidebar-icon">{icon}</span>
             <span>{label}</span>
-            {label === 'Ventas' && <small className="nav-count">4</small>}
+            {label === 'Ventas' && <small className="nav-count">{salesCount}</small>}
           </button>
-        ))}
+          )
+        })}
 
         <span className="nav-label nav-label-spaced">Herramientas</span>
         {secondaryItems.map(([icon, label]) => (

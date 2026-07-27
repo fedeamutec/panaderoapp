@@ -1,5 +1,6 @@
-function Topbar({ account, loading, onSync, onConnect, onDisconnect }) {
+function Topbar({ account, loading, onSync, onConnect, onDisconnect, section = 'ventas' }) {
   const connected = Boolean(account?.connected)
+  const isInvoices = section === 'facturas'
 
   return (
     <header className="topbar">
@@ -7,9 +8,9 @@ function Topbar({ account, loading, onSync, onConnect, onDisconnect }) {
         <div className="breadcrumb">
           <span>Panadero</span>
           <span>/</span>
-          <strong>Inicio</strong>
+          <strong>{isInvoices ? 'Facturas' : 'Ventas'}</strong>
         </div>
-        <h1>Ventas</h1>
+        <h1>{isInvoices ? 'Registro de facturación' : 'Ventas'}</h1>
       </div>
 
       <div className="topbar-actions">
@@ -21,9 +22,11 @@ function Topbar({ account, loading, onSync, onConnect, onDisconnect }) {
           </span>
         </div>
 
-        <button className="ghost-button" type="button" onClick={onSync} disabled={loading || !connected}>
-          {loading ? 'Sincronizando…' : '↻ Sincronizar'}
-        </button>
+        {!isInvoices && (
+          <button className="ghost-button" type="button" onClick={onSync} disabled={loading || !connected}>
+            {loading ? 'Sincronizando…' : '↻ Sincronizar'}
+          </button>
+        )}
         <button
           className={connected ? 'ghost-button' : 'primary-button'}
           type="button"

@@ -40,8 +40,14 @@ app.get('/api/mercadolibre/callback', async (req, res) => {
   }
 })
 
-app.post('/api/mercadolibre/sync', async (_req, res) => {
-  try { res.json(await syncOrders()) } catch (error) { res.status(500).json({ error: error.message }) }
+app.post('/api/mercadolibre/sync', async (req, res) => {
+  try {
+    const page = Number(req.query.page || req.body?.page || 1)
+    const pageSize = Number(req.query.pageSize || req.body?.pageSize || 50)
+    res.json(await syncOrders({ page, pageSize }))
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
 })
 
 app.get('/api/mercadolibre/orders', async (_req, res) => {

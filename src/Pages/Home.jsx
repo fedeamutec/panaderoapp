@@ -56,6 +56,13 @@ function Home() {
   const [orderDetail, setOrderDetail] = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [detailError, setDetailError] = useState('')
+  const [page, setPage] = useState(1)
+  const [pageSize] = useState(50)
+  const [totalSales, setTotalSales] = useState(0)
+  const [totalPages, setTotalPages] = useState(1)
+  const [invoiceTypes, setInvoiceTypes] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('panadero-invoice-types') || '{}') } catch { return {} }
+  })
 
   const loadConnection = useCallback(async () => {
     try {
@@ -68,7 +75,14 @@ function Home() {
 
       if (status.connected) {
         const orderPayload = await api('/mercadolibre/orders')
-        if (orderPayload.orders?.length) setSales(orderPayload.orders)
+        if (orderPayload.orders?.length) {
+          setSales(orderPayload.orders)
+          setSelectedSaleId(orderPayload.orders[0]?.id || '')
+        }
+        setPage(Number(orderPayload.page || 1))
+        setTotalSales(Number(orderPayload.total || orderPayload.orders?.length || 0))
+        setTotalPages(Number(orderPayload.totalPages || 1))
+        localStorage.setItem('panadero-total-sales', String(orderPayload.total || orderPayload.orders?.length || 0))
       }
     } catch {
       setNotice('No se pudo conectar con Panadero API.')
@@ -94,6 +108,10 @@ function Home() {
   useEffect(() => {
     if (selectedSaleId) localStorage.setItem('panadero-selected-sale', selectedSaleId)
   }, [selectedSaleId])
+
+  useEffect(() => {
+    localStorage.setItem('panadero-invoice-types', JSON.stringify(invoiceTypes))
+  }, [invoiceTypes])
 
   useEffect(() => {
     let cancelled = false
@@ -195,19 +213,29 @@ function Home() {
     }
   }
 
-  const handleSync = async () => {
+  const loadPage = async (targetPage, showNotice = false) => {
     setLoading(true)
     setNotice('')
     try {
-      const result = await api('/mercadolibre/sync', { method: 'POST' })
+      const result = await api(`/mercadolibre/sync?page=${targetPage}&pageSize=${pageSize}`, { method: 'POST' })
       setSales(result.orders || [])
+      setPage(Number(result.page || targetPage))
+      setTotalSales(Number(result.total || 0))
+      setTotalPages(Number(result.totalPages || 1))
       setSelectedSaleId(result.orders?.[0]?.id || '')
-      setNotice(`Sincronización completa: ${result.orders?.length || 0} ventas cargadas.`)
+      localStorage.setItem('panadero-total-sales', String(result.total || 0))
+      if (showNotice) setNotice(`Página ${result.page || targetPage} actualizada: ${result.orders?.length || 0} ventas.`)
     } catch (error) {
       setNotice(error.message)
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleSync = () => loadPage(page, true)
+  const handlePageChange = (targetPage) => {
+    if (targetPage < 1 || targetPage > totalPages || targetPage === page || loading) return
+    loadPage(targetPage)
   }
 
   const handleDisconnect = async () => {
@@ -219,6 +247,10 @@ function Home() {
       setSales(demoSales)
       setSelectedSaleId(demoSales[0]?.id)
       setOrderDetail(null)
+      setPage(1)
+      setTotalSales(0)
+      setTotalPages(1)
+      localStorage.setItem('panadero-total-sales', '0')
       setNotice('Cuenta desconectada.')
     } catch (error) {
       setNotice(error.message)
@@ -282,7 +314,7 @@ function Home() {
 
           <div className="list-heading">
             <span>Operaciones recientes</span>
-            <small>{visibleSales.length} resultados</small>
+            <small>{totalSales || visibleSales.length} ventas · página {page} de {totalPages}</small>
           </div>
 
           <SalesTable
@@ -290,6 +322,12 @@ function Home() {
             selectedSaleId={selectedSale?.id}
             onSelectSale={setSelectedSaleId}
           />
+
+          <div className="pagination-bar">
+            <button type="button" className="ghost-button" onClick={() => handlePageChange(page - 1)} disabled={page <= 1 || loading}>← Anterior</button>
+            <span>Página <strong>{page}</strong> de <strong>{totalPages}</strong></span>
+            <button type="button" className="ghost-button" onClick={() => handlePageChange(page + 1)} disabled={page >= totalPages || loading}>Siguiente →</button>
+          </div>
         </section>
 
         <section className="detail-panel">
@@ -382,6 +420,23 @@ function Home() {
                   <div><small>Cuotas</small><strong>{primaryPayment?.installments || 1}</strong></div>
                   <div><small>ID de pago</small><strong>{textOrDash(primaryPayment?.id)}</strong></div>
                 </div>
+              </div>
+
+
+              <div className="detail-block invoice-type-block">
+                <div className="section-label">Tipo de comprobante</div>
+                <label className="invoice-type-field">
+                  <span>Selección para esta venta</span>
+                  <select
+                    value={invoiceTypes[selectedSale.id] || 'automatic'}
+                    onChange={(event) => setInvoiceTypes((current) => ({ ...current, [selectedSale.id]: event.target.value }))}
+                  >
+                    <option value="automatic">Automático</option>
+                    <option value="A">Factura A</option>
+                    <option value="C">Consumidor final / Factura C</option>
+                  </select>
+                </label>
+                <small className="financial-note">La opción queda guardada. Al conectar ARCA, Panadero usará esta selección para emitir el comprobante.</small>
               </div>
 
               <div className="detail-block activity-block">

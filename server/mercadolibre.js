@@ -288,18 +288,41 @@ export async function getStatus() {
   }
 }
 
-export async function syncOrders() {
+export async function syncOrders({ page = 1, pageSize = 50 } = {}) {
   const store = await readStore()
   if (!store.account?.id) throw new Error('Mercado Libre no está conectado')
-  const result = await apiFetch(`/orders/search?seller=${encodeURIComponent(store.account.id)}&sort=date_desc&limit=50`)
+
+  const safePageSize = Math.min(50, Math.max(10, Number(pageSize) || 50))
+  const safePage = Math.max(1, Number(page) || 1)
+  const offset = (safePage - 1) * safePageSize
+
+  const result = await apiFetch(
+    `/orders/search?seller=${encodeURIComponent(store.account.id)}&sort=date_desc&limit=${safePageSize}&offset=${offset}`,
+  )
   const orders = (result.results || []).map(normalizeOrder)
-  await updateStore((current) => ({ ...current, orders, lastSyncAt: new Date().toISOString() }))
-  return { orders, total: result.paging?.total ?? orders.length }
+  const total = Number(result.paging?.total ?? orders.length)
+  const totalPages = Math.max(1, Math.ceil(total / safePageSize))
+  const lastSyncAt = new Date().toISOString()
+
+  await updateStore((current) => ({
+    ...current,
+    orders,
+    paging: { page: safePage, pageSize: safePageSize, total, totalPages },
+    lastSyncAt,
+  }))
+
+  return { orders, page: safePage, pageSize: safePageSize, total, totalPages, lastSyncAt }
 }
 
 export async function getOrders() {
   const store = await readStore()
-  return { orders: store.orders || [], lastSyncAt: store.lastSyncAt || null }
+  const paging = store.paging || {
+    page: 1,
+    pageSize: 50,
+    total: store.orders?.length || 0,
+    totalPages: 1,
+  }
+  return { orders: store.orders || [], ...paging, lastSyncAt: store.lastSyncAt || null }
 }
 
 export async function disconnect() {
