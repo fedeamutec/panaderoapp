@@ -5,6 +5,7 @@ import {
   createAuthorizationUrl,
   disconnect,
   exchangeAuthorizationCode,
+  getOrderDetail,
   getOrders,
   getStatus,
   syncOrders,
@@ -45,6 +46,14 @@ app.post('/api/mercadolibre/sync', async (_req, res) => {
 
 app.get('/api/mercadolibre/orders', async (_req, res) => {
   try { res.json(await getOrders()) } catch (error) { res.status(500).json({ error: error.message }) }
+})
+
+app.get('/api/mercadolibre/order/:id', async (req, res) => {
+  try {
+    res.json(await getOrderDetail(req.params.id))
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
 })
 
 app.post('/api/mercadolibre/disconnect', async (_req, res) => {

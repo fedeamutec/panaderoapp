@@ -150,6 +150,135 @@ function normalizeOrder(order) {
   }
 }
 
+function sumPaymentFees(payments) {
+  return payments.reduce((total, payment) => {
+    const paymentFees = Array.isArray(payment.fee_details)
+      ? payment.fee_details.reduce((subtotal, fee) => subtotal + Number(fee.amount || 0), 0)
+      : 0
+    return total + paymentFees
+  }, 0)
+}
+
+function buildOrderDetail(order, shipment, billingInfo) {
+  const payments = Array.isArray(order.payments) ? order.payments : []
+  const receiverAddress = shipment?.receiver_address || order.shipping?.receiver_address || null
+  const billingAddress = billingInfo?.billing_info?.additional_info || billingInfo?.additional_info || null
+  const buyerName = [
+    billingInfo?.billing_info?.name,
+    billingInfo?.name,
+    order.buyer?.first_name,
+    order.buyer?.last_name,
+  ].filter(Boolean).join(' ').trim()
+
+  const documentType = billingInfo?.billing_info?.doc_type || billingInfo?.doc_type || 'Sin datos'
+  const documentNumber = billingInfo?.billing_info?.doc_number || billingInfo?.doc_number || 'Sin datos'
+  const phone = receiverAddress?.receiver_phone || receiverAddress?.phone || order.buyer?.phone?.number || null
+  const marketplaceFees = sumPaymentFees(payments)
+  const shippingCost = Number(
+    shipment?.shipping_option?.cost
+      ?? shipment?.base_cost
+      ?? order.shipping?.cost
+      ?? 0
+  )
+  const taxes = Number(order.taxes?.amount || 0)
+  const total = Number(order.total_amount || order.paid_amount || 0)
+  const netAmount = payments.reduce((sum, payment) => {
+    if (payment.transaction_amount_refunded) {
+      return sum + Number(payment.transaction_amount || 0) - Number(payment.transaction_amount_refunded || 0)
+    }
+    return sum + Number(payment.net_received_amount ?? payment.transaction_amount ?? 0)
+  }, 0)
+
+  return {
+    id: String(order.id),
+    status: order.status || '',
+    dateCreated: order.date_created || null,
+    buyer: {
+      id: order.buyer?.id ? String(order.buyer.id) : null,
+      nickname: order.buyer?.nickname || null,
+      name: buyerName || order.buyer?.nickname || 'Sin datos',
+      documentType,
+      documentNumber: String(documentNumber),
+      phone,
+      email: order.buyer?.email || null,
+    },
+    address: receiverAddress ? {
+      addressLine: receiverAddress.address_line || null,
+      streetName: receiverAddress.street_name || null,
+      streetNumber: receiverAddress.street_number || null,
+      comment: receiverAddress.comment || null,
+      zipCode: receiverAddress.zip_code || null,
+      city: receiverAddress.city?.name || null,
+      state: receiverAddress.state?.name || null,
+      country: receiverAddress.country?.name || null,
+      latitude: receiverAddress.latitude ?? null,
+      longitude: receiverAddress.longitude ?? null,
+    } : null,
+    billingAddress,
+    items: (order.order_items || []).map((entry) => ({
+      id: String(entry.item?.id || ''),
+      title: entry.item?.title || 'Producto Mercado Libre',
+      quantity: Number(entry.quantity || 1),
+      unitPrice: Number(entry.unit_price || 0),
+      fullUnitPrice: Number(entry.full_unit_price || entry.unit_price || 0),
+      saleFee: Number(entry.sale_fee || 0),
+      variationId: entry.item?.variation_id || null,
+    })),
+    amounts: {
+      total,
+      paid: Number(order.paid_amount || 0),
+      shippingCost,
+      marketplaceFees,
+      taxes,
+      netAmount,
+    },
+    payments: payments.map((payment) => ({
+      id: payment.id ? String(payment.id) : null,
+      status: payment.status || null,
+      paymentType: payment.payment_type || null,
+      paymentMethodId: payment.payment_method_id || null,
+      installments: Number(payment.installments || 0),
+      transactionAmount: Number(payment.transaction_amount || 0),
+      totalPaidAmount: Number(payment.total_paid_amount || 0),
+      netReceivedAmount: Number(payment.net_received_amount || 0),
+      fees: Array.isArray(payment.fee_details) ? payment.fee_details : [],
+    })),
+  }
+}
+
+export async function getOrderDetail(orderId) {
+  if (!orderId) throw new Error('Falta el ID de la venta')
+
+  const safeOrderId = encodeURIComponent(String(orderId))
+  const order = await apiFetch(`/orders/${safeOrderId}`)
+
+  let shipment = null
+  let billingInfo = null
+
+  if (order.shipping?.id) {
+    try {
+      shipment = await apiFetch(`/shipments/${encodeURIComponent(String(order.shipping.id))}`)
+    } catch {
+      shipment = null
+    }
+  }
+
+  try {
+    billingInfo = await apiFetch(`/orders/${safeOrderId}/billing_info`)
+  } catch {
+    billingInfo = null
+  }
+
+  return {
+    detail: buildOrderDetail(order, shipment, billingInfo),
+    raw: {
+      order,
+      shipment,
+      billingInfo,
+    },
+  }
+}
+
 export async function getStatus() {
   const store = await readStore()
   return {
