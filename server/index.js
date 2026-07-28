@@ -12,7 +12,13 @@ import {
 } from './mercadolibre.js'
 import { generateCsr, getArcaStatus, readCsr, saveCertificate } from './arca/certificates.js'
 import { testArcaConnection } from './arca/wsaa.js'
-import { getLastAuthorizedVoucher, getPointsOfSale, getVoucherTypes } from './arca/wsfe.js'
+import {
+  createTestInvoice,
+  getLastAuthorizedVoucher,
+  getPointsOfSale,
+  getReceiverVatConditions,
+  getVoucherTypes,
+} from './arca/wsfe.js'
 
 const app = express()
 const port = Number(process.env.API_PORT || 3001)
@@ -84,6 +90,34 @@ app.get('/api/arca/voucher-types', async (_req, res) => {
   } catch (error) {
     console.error('ARCA voucher types error:', error)
     res.status(502).json({ ok: false, error: error.message })
+  }
+})
+
+
+app.get('/api/arca/receiver-vat-conditions', async (req, res) => {
+  try {
+    res.json(await getReceiverVatConditions({
+      voucherClass: req.query.voucherClass || 'C',
+    }))
+  } catch (error) {
+    console.error('ARCA receiver VAT conditions error:', error)
+    res.status(502).json({ ok: false, error: error.message })
+  }
+})
+
+app.post('/api/arca/test-invoice', async (req, res) => {
+  try {
+    res.json(await createTestInvoice({
+      pointOfSale: req.body?.pointOfSale,
+      amount: req.body?.amount,
+      documentType: req.body?.documentType,
+      documentNumber: req.body?.documentNumber,
+      recipientVatConditionId: req.body?.recipientVatConditionId,
+      confirmation: req.body?.confirmation,
+    }))
+  } catch (error) {
+    console.error('ARCA test invoice error:', error)
+    res.status(400).json({ ok: false, error: error.message })
   }
 })
 
