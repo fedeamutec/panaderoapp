@@ -403,3 +403,23 @@ body,
 .arca-textarea:focus { border-color: var(--accent); }
 .csr-output { min-height: 190px; }
 .step-ok { display: inline-flex; align-items: center; min-height: 32px; color: var(--accent); font-size: calc(10px * var(--font-scale)); font-weight: 700; }
+
+/* ===== ICONOS REDONDEADOS Y ESTADO ARCA ===== */
+.sidebar-icon { color: currentColor; }
+.sidebar-icon svg { display: block; width: 17px; height: 17px; }
+.sidebar-item { border-radius: 8px; }
+.sidebar-item.active .sidebar-icon { color: var(--text); }
+
+.arca-state.connected { color: var(--green); border-color: rgba(103,197,139,.45); background: rgba(103,197,139,.1); }
+.arca-connection-actions { display: flex; align-items: center; gap: 10px; }
+.arca-connection-result { max-width: 680px; margin-top: 14px; padding: 13px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.arca-connection-result.success { border-color: rgba(103,197,139,.32); }
+.arca-connection-result.error { border-color: rgba(223,119,119,.32); }
+.arca-connection-result > strong { color: var(--text); font-size: calc(11px * var(--font-scale)); }
+.arca-connection-result.success > strong { color: var(--green); }
+.arca-connection-result.error > strong { color: var(--red); }
+.arca-connection-result dl { display: grid; gap: 8px; margin: 12px 0 0; }
+.arca-connection-result dl > div { display: grid; grid-template-columns: 150px minmax(0,1fr); gap: 16px; }
+.arca-connection-result dt { color: var(--subtle); font-size: calc(9px * var(--font-scale)); }
+.arca-connection-result dd { margin: 0; color: var(--text); font-size: calc(10px * var(--font-scale)); }
+.arca-connection-result p { margin: 9px 0 0; color: var(--muted); font-size: calc(10px * var(--font-scale)); line-height: 1.5; }

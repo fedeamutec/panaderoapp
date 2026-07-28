@@ -5,12 +5,12 @@ RUN apk add --no-cache openssl
 WORKDIR /app
 
 COPY package*.json ./
-
 RUN npm install --omit=dev
 
 COPY server ./server
 
 ENV NODE_ENV=production
+ENV ARCA_DATA_DIR=/app/server/arca/data
 
 EXPOSE 3001
 

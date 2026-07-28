@@ -10,12 +10,24 @@ async function api(path, options) {
   return payload
 }
 
+function formatDateTime(value) {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  return new Intl.DateTimeFormat('es-AR', {
+    dateStyle: 'short',
+    timeStyle: 'medium',
+  }).format(date)
+}
+
 function ArcaSettings() {
   const [status, setStatus] = useState(null)
+  const [connection, setConnection] = useState(null)
   const [csr, setCsr] = useState('')
   const [certificate, setCertificate] = useState('')
   const [notice, setNotice] = useState('')
   const [loading, setLoading] = useState(false)
+  const [testing, setTesting] = useState(false)
 
   const loadStatus = useCallback(async () => {
     try {
@@ -49,7 +61,7 @@ function ArcaSettings() {
 
   const copyCsr = async () => {
     await navigator.clipboard.writeText(csr)
-    setNotice('CSR copiado. Volvé a WSASS y pegalo en el campo grande.')
+    setNotice('CSR copiado.')
   }
 
   const saveCertificate = async () => {
@@ -63,11 +75,27 @@ function ArcaSettings() {
       })
       setStatus(result)
       setCertificate('')
-      setNotice('Certificado guardado correctamente. El próximo paso será autorizar wsfe.')
+      setNotice('Certificado guardado correctamente.')
     } catch (error) {
       setNotice(error.message)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const testConnection = async () => {
+    setTesting(true)
+    setNotice('')
+    setConnection(null)
+    try {
+      const result = await api('/arca/test-connection', { method: 'POST' })
+      setConnection(result)
+      setNotice('Conexión con ARCA comprobada correctamente.')
+    } catch (error) {
+      setConnection({ connected: false, error: error.message })
+      setNotice(error.message)
+    } finally {
+      setTesting(false)
     }
   }
 
@@ -85,7 +113,9 @@ function ArcaSettings() {
             <h2>Conectar ARCA</h2>
             <p>Homologación · CUIT {status?.cuit || '20366076957'} · Punto de venta 0003</p>
           </div>
-          <span className={`arca-state ${complete ? 'ready' : ''}`}>{complete ? 'Certificado cargado' : 'En configuración'}</span>
+          <span className={`arca-state ${connection?.connected ? 'connected' : complete ? 'ready' : ''}`}>
+            {connection?.connected ? 'Conectado' : complete ? 'Certificado cargado' : 'En configuración'}
+          </span>
         </div>
 
         <div className="setup-steps">
@@ -96,9 +126,7 @@ function ArcaSettings() {
               <p>Panadero crea la clave privada y el CSR. La clave queda guardada únicamente en el backend.</p>
               {!status?.hasCsr ? (
                 <button className="primary-button" type="button" onClick={generate} disabled={loading}>{loading ? 'Generando…' : 'Generar CSR'}</button>
-              ) : (
-                <span className="step-ok">✓ CSR generado</span>
-              )}
+              ) : <span className="step-ok">✓ CSR generado</span>}
             </div>
           </article>
 
@@ -117,6 +145,31 @@ function ArcaSettings() {
               <h3>Guardar certificado de ARCA</h3>
               <p>Después de crear el certificado en WSASS, copiá el resultado completo y pegalo acá.</p>
               {!complete ? <><textarea className="arca-textarea" value={certificate} onChange={(event) => setCertificate(event.target.value)} placeholder="-----BEGIN CERTIFICATE-----" /><button className="primary-button" type="button" onClick={saveCertificate} disabled={loading || !certificate.trim()}>Guardar certificado</button></> : <span className="step-ok">✓ Certificado almacenado</span>}
+            </div>
+          </article>
+
+          <article className={`setup-card ${complete ? 'active' : ''} ${connection?.connected ? 'done' : ''}`}>
+            <span className="step-number">4</span>
+            <div>
+              <h3>Probar conexión con ARCA</h3>
+              <p>Panadero firma una solicitud con el certificado, solicita un ticket WSAA y verifica el acceso al servicio WSFE.</p>
+              <div className="arca-connection-actions">
+                <button className="primary-button" type="button" onClick={testConnection} disabled={!complete || testing}>
+                  {testing ? 'Conectando…' : 'Probar conexión'}
+                </button>
+              </div>
+              {connection && (
+                <div className={`arca-connection-result ${connection.connected ? 'success' : 'error'}`}>
+                  <strong>{connection.connected ? 'Conectado con ARCA' : 'No se pudo conectar'}</strong>
+                  {connection.connected ? (
+                    <dl>
+                      <div><dt>Servicio</dt><dd>{connection.service || 'wsfe'}</dd></div>
+                      <div><dt>Ambiente</dt><dd>{connection.environment === 'production' ? 'Producción' : 'Homologación'}</dd></div>
+                      <div><dt>Token válido hasta</dt><dd>{formatDateTime(connection.expirationTime)}</dd></div>
+                    </dl>
+                  ) : <p>{connection.error}</p>}
+                </div>
+              )}
             </div>
           </article>
         </div>
