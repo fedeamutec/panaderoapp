@@ -12,6 +12,7 @@ import {
 } from './mercadolibre.js'
 import { generateCsr, getArcaStatus, readCsr, saveCertificate } from './arca/certificates.js'
 import { testArcaConnection } from './arca/wsaa.js'
+import { getLastAuthorizedVoucher, getPointsOfSale, getVoucherTypes } from './arca/wsfe.js'
 
 const app = express()
 const port = Number(process.env.API_PORT || 3001)
@@ -65,6 +66,36 @@ app.post('/api/arca/test-connection', async (_req, res) => {
       connected: false,
       error: error.message,
     })
+  }
+})
+
+app.get('/api/arca/points-of-sale', async (_req, res) => {
+  try {
+    res.json(await getPointsOfSale())
+  } catch (error) {
+    console.error('ARCA points of sale error:', error)
+    res.status(502).json({ ok: false, error: error.message })
+  }
+})
+
+app.get('/api/arca/voucher-types', async (_req, res) => {
+  try {
+    res.json(await getVoucherTypes())
+  } catch (error) {
+    console.error('ARCA voucher types error:', error)
+    res.status(502).json({ ok: false, error: error.message })
+  }
+})
+
+app.get('/api/arca/last-voucher', async (req, res) => {
+  try {
+    res.json(await getLastAuthorizedVoucher({
+      pointOfSale: req.query.pointOfSale,
+      voucherType: req.query.voucherType,
+    }))
+  } catch (error) {
+    console.error('ARCA last voucher error:', error)
+    res.status(400).json({ ok: false, error: error.message })
   }
 })
 
