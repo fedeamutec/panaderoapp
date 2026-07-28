@@ -382,3 +382,24 @@ body,
 .registry-table th { position: sticky; top: 0; z-index: 1; color: var(--subtle); background: var(--panel-2); font-size: calc(9px * var(--font-scale)); text-transform: uppercase; letter-spacing: .06em; }
 .registry-table td { color: var(--text); }
 .registry-empty { height: 220px; color: var(--muted) !important; text-align: center !important; white-space: normal !important; }
+
+/* ===== ASISTENTE ARCA ===== */
+.arca-setup { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 24px; background: var(--panel); }
+.arca-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; max-width: 980px; margin: 0 auto 22px; }
+.arca-heading h2 { margin: 5px 0 0; font-size: calc(23px * var(--font-scale)); }
+.arca-heading p { margin: 8px 0 0; color: var(--muted); font-size: calc(10px * var(--font-scale)); }
+.eyebrow { color: var(--accent); font-size: calc(9px * var(--font-scale)); font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
+.arca-state { padding: 7px 10px; color: var(--muted); background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; font-size: calc(9px * var(--font-scale)); }
+.arca-state.ready { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.setup-steps { display: grid; gap: 12px; max-width: 980px; margin: 0 auto; }
+.setup-card { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 14px; padding: 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); opacity: .62; }
+.setup-card.active, .setup-card.done { opacity: 1; }
+.setup-card.active { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.step-number { display: grid; width: 30px; height: 30px; place-items: center; border: 1px solid var(--line); border-radius: 50%; color: var(--muted); font-size: calc(10px * var(--font-scale)); font-weight: 800; }
+.setup-card.active .step-number, .setup-card.done .step-number { color: var(--accent); border-color: var(--accent); }
+.setup-card h3 { margin: 1px 0 0; font-size: calc(13px * var(--font-scale)); }
+.setup-card p { max-width: 700px; margin: 7px 0 13px; color: var(--muted); font-size: calc(10px * var(--font-scale)); line-height: 1.55; }
+.arca-textarea { display: block; width: 100%; min-height: 145px; margin: 0 0 10px; padding: 12px; resize: vertical; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 7px; outline: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.5; }
+.arca-textarea:focus { border-color: var(--accent); }
+.csr-output { min-height: 190px; }
+.step-ok { display: inline-flex; align-items: center; min-height: 32px; color: var(--accent); font-size: calc(10px * var(--font-scale)); font-weight: 700; }

@@ -10,6 +10,7 @@ import {
   getStatus,
   syncOrders,
 } from './mercadolibre.js'
+import { generateCsr, getArcaStatus, readCsr, saveCertificate } from './arca/certificates.js'
 
 const app = express()
 const port = Number(process.env.API_PORT || 3001)
@@ -19,6 +20,23 @@ app.use(cors({ origin: [frontendUrl, 'https://panaderoapp.com'], credentials: fa
 app.use(express.json())
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }))
+
+
+app.get('/api/arca/status', async (_req, res) => {
+  try { res.json(await getArcaStatus()) } catch (error) { res.status(500).json({ error: error.message }) }
+})
+
+app.get('/api/arca/csr', async (_req, res) => {
+  try { res.json({ csr: await readCsr(), ...(await getArcaStatus()) }) } catch (error) { res.status(404).json({ error: error.message }) }
+})
+
+app.post('/api/arca/csr', async (_req, res) => {
+  try { res.json(await generateCsr()) } catch (error) { res.status(500).json({ error: error.message }) }
+})
+
+app.post('/api/arca/certificate', async (req, res) => {
+  try { res.json(await saveCertificate(req.body?.certificate)) } catch (error) { res.status(400).json({ error: error.message }) }
+})
 
 app.get('/api/mercadolibre/status', async (_req, res) => {
   try { res.json(await getStatus()) } catch (error) { res.status(500).json({ error: error.message }) }

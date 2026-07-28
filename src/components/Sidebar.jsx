@@ -9,6 +9,7 @@ const mainItems = [
 const secondaryItems = [
   ['◉', 'Sincronizaciones'],
   ['▥', 'Reportes'],
+  ['◈', 'ARCA'],
 ]
 
 const themeLabels = {
@@ -72,12 +73,15 @@ function Sidebar({
         })}
 
         <span className="nav-label nav-label-spaced">Herramientas</span>
-        {secondaryItems.map(([icon, label]) => (
-          <button className="sidebar-item" type="button" key={label}>
+        {secondaryItems.map(([icon, label]) => {
+          const section = label === 'ARCA' ? 'arca' : label.toLowerCase()
+          return (
+          <button className={`sidebar-item ${activeSection === section ? 'active' : ''}`} type="button" key={label} onClick={() => label === 'ARCA' && onSectionChange('arca')}>
             <span className="sidebar-icon">{icon}</span>
             <span>{label}</span>
           </button>
-        ))}
+          )
+        })}
 
         <button
           className={`sidebar-item ${settingsOpen ? 'active' : ''}`}

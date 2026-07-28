@@ -1,6 +1,7 @@
 function Topbar({ account, loading, onSync, onConnect, onDisconnect, section = 'ventas' }) {
   const connected = Boolean(account?.connected)
   const isInvoices = section === 'facturas'
+  const isArca = section === 'arca'
 
   return (
     <header className="topbar">
@@ -8,12 +9,12 @@ function Topbar({ account, loading, onSync, onConnect, onDisconnect, section = '
         <div className="breadcrumb">
           <span>Panadero</span>
           <span>/</span>
-          <strong>{isInvoices ? 'Facturas' : 'Ventas'}</strong>
+          <strong>{isArca ? 'ARCA' : isInvoices ? 'Facturas' : 'Ventas'}</strong>
         </div>
-        <h1>{isInvoices ? 'Registro de facturación' : 'Ventas'}</h1>
+        <h1>{isArca ? 'Configuración fiscal' : isInvoices ? 'Registro de facturación' : 'Ventas'}</h1>
       </div>
 
-      <div className="topbar-actions">
+      {!isArca && <div className="topbar-actions">
         <div className="connection-pill">
           <span className={`status-dot ${connected ? 'connected' : ''}`} />
           <span>
@@ -35,7 +36,7 @@ function Topbar({ account, loading, onSync, onConnect, onDisconnect, section = '
         >
           {connected ? 'Desconectar' : 'Conectar cuenta'}
         </button>
-      </div>
+      </div>}
     </header>
   )
 }

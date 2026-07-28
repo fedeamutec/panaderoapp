@@ -3,6 +3,7 @@ import './App.css'
 import Sidebar from './components/Sidebar'
 import Home from './Pages/Home'
 import Invoices from './Pages/Invoices'
+import ArcaSettings from './Pages/ArcaSettings'
 
 const THEMES = ['cursor', 'black', 'paper']
 
@@ -47,7 +48,7 @@ function App() {
         fontScale={fontScale}
         onFontScaleChange={setFontScale}
       />
-      {activeSection === 'facturas' ? <Invoices /> : <Home />}
+      {activeSection === 'facturas' ? <Invoices /> : activeSection === 'arca' ? <ArcaSettings /> : <Home />}
     </div>
   )
 }
