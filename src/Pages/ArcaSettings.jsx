@@ -20,6 +20,21 @@ function formatDateTime(value) {
   }).format(date)
 }
 
+function formatArcaDate(value) {
+  if (!value || String(value).length !== 8) return value || '—'
+  const text = String(value)
+  return `${text.slice(6, 8)}/${text.slice(4, 6)}/${text.slice(0, 4)}`
+}
+
+function formatMoney(value) {
+  const amount = Number(value)
+  if (!Number.isFinite(amount)) return '—'
+  return new Intl.NumberFormat('es-AR', {
+    style: 'currency',
+    currency: 'ARS',
+  }).format(amount)
+}
+
 function ArcaSettings() {
   const [status, setStatus] = useState(null)
   const [connection, setConnection] = useState(null)
@@ -28,6 +43,9 @@ function ArcaSettings() {
   const [notice, setNotice] = useState('')
   const [loading, setLoading] = useState(false)
   const [testing, setTesting] = useState(false)
+  const [testAmount, setTestAmount] = useState('100')
+  const [issuingTestInvoice, setIssuingTestInvoice] = useState(false)
+  const [testInvoiceResult, setTestInvoiceResult] = useState(null)
 
   const loadStatus = useCallback(async () => {
     try {
@@ -96,6 +114,48 @@ function ArcaSettings() {
       setNotice(error.message)
     } finally {
       setTesting(false)
+    }
+  }
+
+  const issueTestInvoice = async () => {
+    const amount = Number(testAmount)
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setNotice('Ingresá un importe mayor que cero.')
+      return
+    }
+
+    const confirmed = window.confirm(
+      `Se emitirá una Factura C de prueba por ${formatMoney(amount)} en homologación. Esta acción genera un comprobante nuevo. ¿Continuar?`,
+    )
+
+    if (!confirmed) return
+
+    setIssuingTestInvoice(true)
+    setTestInvoiceResult(null)
+    setNotice('')
+
+    try {
+      const result = await api('/arca/test-invoice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pointOfSale: 3,
+          amount,
+          documentType: 99,
+          documentNumber: 0,
+          recipientVatConditionId: 5,
+          confirmation: 'EMITIR_FACTURA_C_DE_PRUEBA',
+        }),
+      })
+
+      setTestInvoiceResult(result)
+      setNotice(`Factura ${result.voucher?.formattedNumber || ''} autorizada correctamente.`)
+    } catch (error) {
+      setTestInvoiceResult({ ok: false, error: error.message })
+      setNotice(error.message)
+    } finally {
+      setIssuingTestInvoice(false)
     }
   }
 
@@ -168,6 +228,76 @@ function ArcaSettings() {
                       <div><dt>Token válido hasta</dt><dd>{formatDateTime(connection.expirationTime)}</dd></div>
                     </dl>
                   ) : <p>{connection.error}</p>}
+                </div>
+              )}
+            </div>
+          </article>
+
+          <article className={`setup-card ${connection?.connected ? 'active' : ''} ${testInvoiceResult?.ok ? 'done' : ''}`}>
+            <span className="step-number">5</span>
+            <div>
+              <h3>Emitir Factura C de prueba</h3>
+              <p>
+                Genera un comprobante real dentro del ambiente de homologación. Se emitirá a Consumidor Final,
+                sin documento, usando el punto de venta 0003.
+              </p>
+
+              <div className="test-invoice-controls">
+                <label className="test-amount-field">
+                  <span>Importe de prueba</span>
+                  <div>
+                    <strong>$</strong>
+                    <input
+                      type="number"
+                      min="1"
+                      step="0.01"
+                      value={testAmount}
+                      onChange={(event) => setTestAmount(event.target.value)}
+                      disabled={!connection?.connected || issuingTestInvoice}
+                    />
+                  </div>
+                </label>
+
+                <button
+                  className="primary-button"
+                  type="button"
+                  onClick={issueTestInvoice}
+                  disabled={!connection?.connected || issuingTestInvoice || !testAmount}
+                >
+                  {issuingTestInvoice ? 'Emitiendo…' : 'Emitir Factura C de prueba'}
+                </button>
+              </div>
+
+              <small className="test-invoice-warning">
+                Cada prueba autorizada consume el próximo número de comprobante en homologación.
+              </small>
+
+              {testInvoiceResult && (
+                <div className={`test-invoice-result ${testInvoiceResult.ok ? 'success' : 'error'}`}>
+                  {testInvoiceResult.ok ? (
+                    <>
+                      <div className="test-invoice-result-heading">
+                        <div>
+                          <span>Factura autorizada</span>
+                          <strong>{testInvoiceResult.voucher?.formattedNumber || '—'}</strong>
+                        </div>
+                        <span className="cae-badge">CAE aprobado</span>
+                      </div>
+
+                      <dl>
+                        <div><dt>Tipo</dt><dd>{testInvoiceResult.voucher?.voucherTypeDescription || 'Factura C'}</dd></div>
+                        <div><dt>Importe</dt><dd>{formatMoney(testInvoiceResult.voucher?.amount)}</dd></div>
+                        <div><dt>CAE</dt><dd className="mono-value">{testInvoiceResult.cae || '—'}</dd></div>
+                        <div><dt>Vencimiento CAE</dt><dd>{formatArcaDate(testInvoiceResult.caeExpirationDate)}</dd></div>
+                        <div><dt>Ambiente</dt><dd>{testInvoiceResult.environment === 'production' ? 'Producción' : 'Homologación'}</dd></div>
+                      </dl>
+                    </>
+                  ) : (
+                    <>
+                      <strong>No se pudo emitir la factura</strong>
+                      <p>{testInvoiceResult.error}</p>
+                    </>
+                  )}
                 </div>
               )}
             </div>
