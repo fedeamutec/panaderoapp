@@ -82,6 +82,7 @@ function Home() {
   const [saleInvoices, setSaleInvoices] = useState({})
   const [invoiceLoading, setInvoiceLoading] = useState(false)
   const [invoiceError, setInvoiceError] = useState('')
+  const [invoiceModal, setInvoiceModal] = useState(null)
 
   const loadConnection = useCallback(async () => {
     try {
@@ -299,14 +300,16 @@ function Home() {
     }
   }
 
-  const handleInvoiceSale = async () => {
+  const handleInvoiceSale = () => {
     if (!selectedSale || !orderDetail || invoiceLoading) return
 
     const orderId = String(selectedSale.id)
     const existingInvoice = saleInvoices[orderId]
 
     if (existingInvoice) {
-      setNotice(`Esta venta ya fue facturada como ${existingInvoice.voucher?.formattedNumber || 'comprobante autorizado'}.`)
+      setNotice(
+        `Esta venta ya fue facturada como ${existingInvoice.voucher?.formattedNumber || 'comprobante autorizado'}.`,
+      )
       return
     }
 
@@ -323,21 +326,30 @@ function Home() {
     const documentLabel = [
       orderDetail?.buyer?.documentType,
       orderDetail?.buyer?.documentNumber,
-    ].filter(Boolean).join(' ') || 'Consumidor Final'
+    ].filter(Boolean).join(' ') || 'Consumidor final'
 
-    const confirmed = window.confirm(
-      `Vas a emitir una ${invoiceTypeLabel(resolvedType)} para esta venta.\n\n` +
-      `Cliente: ${orderDetail?.buyer?.name || selectedSale.customer || 'Cliente de Mercado Libre'}\n` +
-      `Documento: ${documentLabel}\n` +
-      `Venta ML: ${orderId}\n` +
-      `Importe total: ${formatCurrency(amount)}\n` +
-      `IVA seleccionado: ${selectedVatRate}%\n\n` +
-      `Ambiente actual: HOMOLOGACIÓN.\n` +
-      `Todavía no tiene validez fiscal de producción.\n\n` +
-      `¿Querés continuar?`,
-    )
+    setInvoiceModal({
+      orderId,
+      amount,
+      selectedType,
+      resolvedType,
+      documentLabel,
+      customer:
+        orderDetail?.buyer?.name ||
+        selectedSale.customer ||
+        'Cliente de Mercado Libre',
+      vatRate: selectedVatRate,
+    })
+  }
 
-    if (!confirmed) return
+  const closeInvoiceModal = () => {
+    if (!invoiceLoading) setInvoiceModal(null)
+  }
+
+  const confirmInvoiceSale = async () => {
+    if (!invoiceModal || invoiceLoading) return
+
+    const { orderId, selectedType, vatRate } = invoiceModal
 
     setInvoiceLoading(true)
     setInvoiceError('')
@@ -350,7 +362,7 @@ function Home() {
         body: JSON.stringify({
           orderId,
           invoiceType: selectedType,
-          vatRate: selectedVatRate,
+          vatRate,
           confirmation: `EMITIR_VENTA_${orderId}`,
         }),
       })
@@ -364,12 +376,12 @@ function Home() {
             : sale,
         ),
       )
+      setInvoiceModal(null)
       setNotice(
         `Venta facturada correctamente: ${invoice?.voucher?.formattedNumber || 'comprobante autorizado'}.`,
       )
     } catch (error) {
       setInvoiceError(error.message)
-      setNotice(error.message)
     } finally {
       setInvoiceLoading(false)
     }
@@ -690,6 +702,93 @@ function Home() {
           )}
         </section>
       </div>
+
+      {invoiceModal && (
+        <div
+          className="invoice-modal-backdrop"
+          role="presentation"
+          onMouseDown={closeInvoiceModal}
+        >
+          <section
+            className="invoice-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="invoice-modal-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="invoice-modal-header">
+              <div>
+                <span>Confirmación fiscal</span>
+                <h3 id="invoice-modal-title">Emitir {invoiceTypeLabel(invoiceModal.resolvedType)}</h3>
+              </div>
+              <button
+                type="button"
+                className="invoice-modal-close"
+                onClick={closeInvoiceModal}
+                disabled={invoiceLoading}
+                aria-label="Cerrar"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="invoice-modal-summary">
+              <div>
+                <small>Cliente</small>
+                <strong>{invoiceModal.customer}</strong>
+              </div>
+              <div>
+                <small>Documento</small>
+                <strong>{invoiceModal.documentLabel}</strong>
+              </div>
+              <div>
+                <small>Venta Mercado Libre</small>
+                <strong>#{invoiceModal.orderId}</strong>
+              </div>
+              <div>
+                <small>Alícuota de IVA</small>
+                <strong>IVA {String(invoiceModal.vatRate).replace('.', ',')}%</strong>
+              </div>
+            </div>
+
+            <div className="invoice-modal-total">
+              <span>Importe total</span>
+              <strong>{formatCurrency(invoiceModal.amount)}</strong>
+            </div>
+
+            <div className="invoice-modal-warning">
+              <strong>Ambiente de homologación</strong>
+              <span>
+                Este comprobante se enviará a ARCA, pero todavía no tendrá validez fiscal
+                de producción.
+              </span>
+            </div>
+
+            {invoiceError && (
+              <div className="invoice-modal-error">{invoiceError}</div>
+            )}
+
+            <div className="invoice-modal-actions">
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={closeInvoiceModal}
+                disabled={invoiceLoading}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="primary-button invoice-modal-confirm"
+                onClick={confirmInvoiceSale}
+                disabled={invoiceLoading}
+              >
+                {invoiceLoading ? 'Solicitando CAE…' : 'Emitir factura'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   )
 }
