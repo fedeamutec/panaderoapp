@@ -18,3 +18,8 @@ export const WSAA_URL = ARCA_ENV === 'production'
 
 export const WSAA_TOKEN_SAFETY_SECONDS = Number(process.env.WSAA_TOKEN_SAFETY_SECONDS || 300)
 export const WSAA_REQUEST_TIMEOUT_MS = Number(process.env.WSAA_REQUEST_TIMEOUT_MS || 30000)
+
+export const ARCA_VAT_RATE = Number(process.env.ARCA_VAT_RATE || 21)
+export const ARCA_ISSUER_VAT_STATUS = String(
+  process.env.ARCA_ISSUER_VAT_STATUS || 'responsable_inscripto',
+).toLowerCase()

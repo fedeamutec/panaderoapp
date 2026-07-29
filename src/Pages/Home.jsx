@@ -41,6 +41,19 @@ function paymentLabel(payment) {
   return methods[payment?.paymentType] || payment?.paymentMethodId || 'Mercado Pago'
 }
 
+function automaticInvoiceType(documentType, documentNumber) {
+  const digits = String(documentNumber || '').replace(/\D/g, '')
+  return String(documentType || '').toUpperCase() === 'CUIT' && digits.length === 11
+    ? 'A'
+    : 'B'
+}
+
+function invoiceTypeLabel(value) {
+  if (value === 'A') return 'Factura A'
+  if (value === 'B') return 'Factura B · Consumidor final'
+  return 'Automático'
+}
+
 function Home() {
   const [account, setAccount] = useState({ connected: false, nickname: '' })
   const [sales, setSales] = useState(demoSales)
@@ -295,19 +308,29 @@ function Home() {
     }
 
     const amount = financials?.total || selectedSale.total
+    const selectedType = invoiceTypes[selectedSale.id] || 'automatic'
+    const resolvedType =
+      selectedType === 'automatic'
+        ? automaticInvoiceType(
+            orderDetail?.buyer?.documentType,
+            orderDetail?.buyer?.documentNumber,
+          )
+        : selectedType
+
     const documentLabel = [
       orderDetail?.buyer?.documentType,
       orderDetail?.buyer?.documentNumber,
     ].filter(Boolean).join(' ') || 'Consumidor Final'
 
     const confirmed = window.confirm(
-      `Vas a emitir una Factura C para esta venta.\n\n` +
+      `Vas a emitir una ${invoiceTypeLabel(resolvedType)} para esta venta.\n\n` +
       `Cliente: ${orderDetail?.buyer?.name || selectedSale.customer || 'Cliente de Mercado Libre'}\n` +
       `Documento: ${documentLabel}\n` +
       `Venta ML: ${orderId}\n` +
-      `Importe: ${formatCurrency(amount)}\n\n` +
+      `Importe total: ${formatCurrency(amount)}\n` +
+      `IVA configurado: 21%\n\n` +
       `Ambiente actual: HOMOLOGACIÓN.\n` +
-      `Este comprobante usa datos reales de la venta, pero todavía no tiene validez fiscal de producción.\n\n` +
+      `Todavía no tiene validez fiscal de producción.\n\n` +
       `¿Querés continuar?`,
     )
 
@@ -323,6 +346,7 @@ function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           orderId,
+          invoiceType: selectedType,
           confirmation: `EMITIR_VENTA_${orderId}`,
         }),
       })
@@ -354,6 +378,11 @@ function Home() {
   const address = orderDetail?.address
   const primaryPayment = orderDetail?.payments?.[0]
   const selectedInvoice = selectedSale ? saleInvoices[String(selectedSale.id)] : null
+  const selectedInvoiceType = selectedSale
+    ? invoiceTypes[selectedSale.id] || 'automatic'
+    : 'automatic'
+  const recommendedInvoiceType = automaticInvoiceType(documentType, documentNumber)
+
 
   return (
     <main className="workspace">
@@ -549,17 +578,47 @@ function Home() {
 
               <div className="detail-block invoice-type-block">
                 <div className="section-label">Tipo de comprobante</div>
-                <label className="invoice-type-field">
-                  <span>Selección para esta venta</span>
-                  <select
-                    value={invoiceTypes[selectedSale.id] || 'automatic'}
-                    onChange={(event) => setInvoiceTypes((current) => ({ ...current, [selectedSale.id]: event.target.value }))}
-                  >
-                    <option value="automatic">Automático · Factura C</option>
-                    <option value="C">Factura C</option>
-                  </select>
-                </label>
-                <small className="financial-note">La cuenta emisora está configurada para Factura C. Si el comprador informa CUIT, se conserva como receptor Responsable Inscripto.</small>
+
+                <div className="invoice-type-segmented" role="group" aria-label="Tipo de comprobante">
+                  {[
+                    ['automatic', 'Automático'],
+                    ['A', 'Factura A'],
+                    ['B', 'Factura B'],
+                  ].map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={selectedInvoiceType === value ? 'active' : ''}
+                      onClick={() =>
+                        setInvoiceTypes((current) => ({
+                          ...current,
+                          [selectedSale.id]: value,
+                        }))
+                      }
+                      disabled={Boolean(selectedInvoice)}
+                    >
+                      <span>{label}</span>
+                      {value === 'automatic' && (
+                        <small>Recomienda {recommendedInvoiceType}</small>
+                      )}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="invoice-recommendation">
+                  <span>Recomendación de Panadero</span>
+                  <strong>{invoiceTypeLabel(recommendedInvoiceType)}</strong>
+                  <small>
+                    {recommendedInvoiceType === 'A'
+                      ? 'Se detectó CUIT válido. Receptor Responsable Inscripto.'
+                      : 'Se emitirá Factura B para consumidor final.'}
+                  </small>
+                </div>
+
+                <small className="financial-note">
+                  MONOSTOCK está configurado como Responsable Inscripto. Automático elige
+                  Factura A con CUIT válido y Factura B en los demás casos. IVA configurado: 21%.
+                </small>
               </div>
 
               <div className="detail-block activity-block">

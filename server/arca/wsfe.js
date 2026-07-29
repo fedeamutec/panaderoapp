@@ -1,4 +1,9 @@
-import { ARCA_CUIT, ARCA_ENV, WSAA_REQUEST_TIMEOUT_MS } from './config.js'
+import {
+  ARCA_CUIT,
+  ARCA_ENV,
+  ARCA_VAT_RATE,
+  WSAA_REQUEST_TIMEOUT_MS,
+} from './config.js'
 import { getWsaaTicket } from './wsaa.js'
 
 const WSFE_URL = ARCA_ENV === 'production'
@@ -325,3 +330,194 @@ export async function createTestInvoice({
   }
 }
 
+function normalizeDocumentType(value) {
+  const normalized = String(value || '').trim().toUpperCase()
+  if (normalized === 'CUIT') return 80
+  if (normalized === 'DNI') return 96
+  return 99
+}
+
+function normalizeDocumentNumber(value) {
+  const digits = String(value || '').replace(/\D/g, '')
+  return digits ? Number(digits) : 0
+}
+
+function resolveVoucherType({ requestedType, documentType, documentNumber }) {
+  const normalized = String(requestedType || 'automatic').trim().toUpperCase()
+  const hasCuit = documentType === 80 && String(documentNumber).length === 11
+
+  if (normalized === 'A') {
+    if (!hasCuit) {
+      throw new Error('Para emitir Factura A el comprador debe tener un CUIT válido.')
+    }
+    return 1
+  }
+
+  if (normalized === 'B') return 6
+  if (normalized !== 'AUTOMATIC') {
+    throw new Error('El tipo de comprobante debe ser automatic, A o B.')
+  }
+
+  return hasCuit ? 1 : 6
+}
+
+function voucherDescription(voucherType) {
+  return voucherType === 1 ? 'Factura A' : 'Factura B'
+}
+
+function recipientVatConditionIdFor({ voucherType }) {
+  return voucherType === 1 ? 1 : 5
+}
+
+function calculateVatBreakdown(grossAmount) {
+  const rate = Number(ARCA_VAT_RATE)
+
+  if (!Number.isFinite(rate) || rate <= 0) {
+    throw new Error('ARCA_VAT_RATE debe ser un porcentaje mayor que cero.')
+  }
+
+  const netAmount = Math.round((grossAmount / (1 + rate / 100) + Number.EPSILON) * 100) / 100
+  const vatAmount = Math.round((grossAmount - netAmount + Number.EPSILON) * 100) / 100
+
+  const rateToId = {
+    0: 3,
+    10.5: 4,
+    21: 5,
+    27: 6,
+    5: 8,
+    2.5: 9,
+  }
+
+  const vatId = rateToId[rate]
+  if (!vatId) {
+    throw new Error(`La alícuota ${rate}% no está configurada en Panadero.`)
+  }
+
+  return { rate, vatId, netAmount, vatAmount }
+}
+
+export async function createSaleInvoice({
+  pointOfSale,
+  amount,
+  requestedType = 'automatic',
+  documentType,
+  documentNumber,
+  confirmation,
+}) {
+  if (ARCA_ENV === 'production') {
+    throw new Error(
+      'La facturación de ventas está bloqueada en producción hasta instalar el certificado y punto de venta productivos.',
+    )
+  }
+
+  if (!String(confirmation || '').startsWith('EMITIR_VENTA_')) {
+    throw new Error('Falta la confirmación de seguridad para facturar la venta.')
+  }
+
+  const ptoVta = Number(pointOfSale)
+  const total = normalizeMoney(amount, 'El importe')
+  const docTipo = normalizeDocumentType(documentType)
+  const docNro = normalizeDocumentNumber(documentNumber)
+  const voucherType = resolveVoucherType({
+    requestedType,
+    documentType: docTipo,
+    documentNumber: docNro,
+  })
+  const recipientVatConditionId = recipientVatConditionIdFor({ voucherType })
+  const { rate, vatId, netAmount, vatAmount } = calculateVatBreakdown(total)
+
+  if (!Number.isInteger(ptoVta) || ptoVta <= 0) {
+    throw new Error('El punto de venta debe ser un número entero mayor que cero.')
+  }
+
+  const lastVoucher = await getLastAuthorizedVoucher({
+    pointOfSale: ptoVta,
+    voucherType,
+  })
+
+  const voucherNumber = lastVoucher.nextVoucherNumber
+  const voucherDate = formatArcaDate()
+
+  const { xml, events } = await callWsfe('FECAESolicitar', (ticket) => `${buildAuth(ticket)}
+<FeCAEReq>
+  <FeCabReq>
+    <CantReg>1</CantReg>
+    <PtoVta>${ptoVta}</PtoVta>
+    <CbteTipo>${voucherType}</CbteTipo>
+  </FeCabReq>
+  <FeDetReq>
+    <FECAEDetRequest>
+      <Concepto>1</Concepto>
+      <DocTipo>${docTipo}</DocTipo>
+      <DocNro>${docNro}</DocNro>
+      <CbteDesde>${voucherNumber}</CbteDesde>
+      <CbteHasta>${voucherNumber}</CbteHasta>
+      <CbteFch>${voucherDate}</CbteFch>
+      <ImpTotal>${total.toFixed(2)}</ImpTotal>
+      <ImpTotConc>0.00</ImpTotConc>
+      <ImpNeto>${netAmount.toFixed(2)}</ImpNeto>
+      <ImpOpEx>0.00</ImpOpEx>
+      <ImpTrib>0.00</ImpTrib>
+      <ImpIVA>${vatAmount.toFixed(2)}</ImpIVA>
+      <MonId>PES</MonId>
+      <MonCotiz>1.000000</MonCotiz>
+      <CondicionIVAReceptorId>${recipientVatConditionId}</CondicionIVAReceptorId>
+      <Iva>
+        <AlicIva>
+          <Id>${vatId}</Id>
+          <BaseImp>${netAmount.toFixed(2)}</BaseImp>
+          <Importe>${vatAmount.toFixed(2)}</Importe>
+        </AlicIva>
+      </Iva>
+    </FECAEDetRequest>
+  </FeDetReq>
+</FeCAEReq>`)
+
+  const headerBlock = extractTag(xml, 'FeCabResp') || ''
+  const detailBlock = extractBlocks(xml, 'FECAEDetResponse')[0] || ''
+  const observations = extractMessages(detailBlock, 'Observaciones', 'Obs')
+  const result = extractTag(detailBlock, 'Resultado') || extractTag(headerBlock, 'Resultado')
+  const cae = extractTag(detailBlock, 'CAE')
+  const caeExpirationDate = extractTag(detailBlock, 'CAEFchVto')
+
+  if (result !== 'A' || !cae) {
+    const observationMessage = observations
+      .map((item) => `${item.code}: ${item.message}`)
+      .join(' | ')
+
+    throw new Error(
+      observationMessage
+        ? `ARCA no autorizó el comprobante: ${observationMessage}`
+        : `ARCA no autorizó el comprobante. Resultado: ${result || 'sin informar'}.`,
+    )
+  }
+
+  return {
+    ok: true,
+    environment: ARCA_ENV,
+    authorized: true,
+    voucher: {
+      pointOfSale: ptoVta,
+      voucherType,
+      voucherTypeDescription: voucherDescription(voucherType),
+      voucherNumber,
+      formattedNumber: `${String(ptoVta).padStart(4, '0')}-${String(voucherNumber).padStart(8, '0')}`,
+      date: voucherDate,
+      amount: total,
+      netAmount,
+      vatAmount,
+      vatRate: rate,
+      currency: 'PES',
+      documentType: docTipo,
+      documentNumber: docNro,
+      recipientVatConditionId,
+    },
+    cae,
+    caeExpirationDate,
+    processedAt: extractTag(headerBlock, 'FchProceso') || null,
+    result,
+    reprocessed: extractTag(headerBlock, 'Reproceso') === 'S',
+    observations,
+    events,
+  }
+}

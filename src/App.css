@@ -608,3 +608,94 @@ body,
     flex-direction: column;
   }
 }
+
+/* ===== SELECTOR SEGMENTADO DE COMPROBANTE A / B ===== */
+.invoice-type-segmented {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.invoice-type-segmented button {
+  display: grid;
+  min-height: 58px;
+  align-content: center;
+  gap: 5px;
+  padding: 9px 12px;
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  text-align: left;
+}
+
+.invoice-type-segmented button:hover {
+  color: var(--text);
+  background: var(--panel-hover);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+}
+
+.invoice-type-segmented button.active {
+  color: var(--button-text);
+  background: var(--accent);
+  border-color: var(--accent-border);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .16);
+}
+
+.invoice-type-segmented button span {
+  font-size: calc(10px * var(--font-scale));
+  font-weight: 800;
+}
+
+.invoice-type-segmented button small {
+  color: var(--subtle);
+  font-size: calc(8px * var(--font-scale));
+}
+
+.invoice-type-segmented button.active small {
+  color: rgba(23, 18, 10, .68);
+}
+
+.invoice-recommendation {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 16px;
+  margin-top: 11px;
+  padding: 12px 13px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+
+.invoice-recommendation span {
+  color: var(--subtle);
+  font-size: calc(8px * var(--font-scale));
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+.invoice-recommendation strong {
+  grid-row: span 2;
+  align-self: center;
+  color: var(--accent);
+  font-size: calc(11px * var(--font-scale));
+}
+
+.invoice-recommendation small {
+  color: var(--muted);
+  font-size: calc(9px * var(--font-scale));
+}
+
+@media (max-width: 720px) {
+  .invoice-type-segmented {
+    grid-template-columns: 1fr;
+  }
+
+  .invoice-recommendation {
+    grid-template-columns: 1fr;
+  }
+
+  .invoice-recommendation strong {
+    grid-row: auto;
+  }
+}
