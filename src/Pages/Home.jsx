@@ -63,6 +63,9 @@ function Home() {
   const [invoiceTypes, setInvoiceTypes] = useState(() => {
     try { return JSON.parse(localStorage.getItem('panadero-invoice-types') || '{}') } catch { return {} }
   })
+  const [saleInvoices, setSaleInvoices] = useState({})
+  const [invoiceLoading, setInvoiceLoading] = useState(false)
+  const [invoiceError, setInvoiceError] = useState('')
 
   const loadConnection = useCallback(async () => {
     try {
@@ -74,9 +77,23 @@ function Home() {
       })
 
       if (status.connected) {
-        const orderPayload = await api('/mercadolibre/orders')
+        const [orderPayload, invoicePayload] = await Promise.all([
+          api('/mercadolibre/orders'),
+          api('/arca/sale-invoices').catch(() => ({ invoices: [] })),
+        ])
+
+        const invoiceMap = Object.fromEntries(
+          (invoicePayload.invoices || []).map((invoice) => [String(invoice.orderId), invoice]),
+        )
+        setSaleInvoices(invoiceMap)
         if (orderPayload.orders?.length) {
-          setSales(orderPayload.orders)
+          setSales(
+            orderPayload.orders.map((sale) =>
+              invoiceMap[String(sale.id)]
+                ? { ...sale, status: 'invoiced', statusLabel: 'Facturada' }
+                : sale,
+            ),
+          )
           setSelectedSaleId(orderPayload.orders[0]?.id || '')
         }
         setPage(Number(orderPayload.page || 1))
@@ -191,11 +208,18 @@ function Home() {
         ? calculatedNet
         : reportedNet || calculatedNet
 
+    const totalDeductions = marketplaceFees + shippingCost + taxes
+    const commissionPercent = total > 0 ? (marketplaceFees / total) * 100 : 0
+    const netPercent = total > 0 ? Math.max(0, Math.min(100, (netAmount / total) * 100)) : 0
+
     return {
       total,
       marketplaceFees,
       shippingCost,
       taxes,
+      totalDeductions,
+      commissionPercent,
+      netPercent,
       netAmount,
       netIsEstimated: marketplaceFees > 0 && reportedNet >= total,
     }
@@ -259,12 +283,77 @@ function Home() {
     }
   }
 
+  const handleInvoiceSale = async () => {
+    if (!selectedSale || !orderDetail || invoiceLoading) return
+
+    const orderId = String(selectedSale.id)
+    const existingInvoice = saleInvoices[orderId]
+
+    if (existingInvoice) {
+      setNotice(`Esta venta ya fue facturada como ${existingInvoice.voucher?.formattedNumber || 'comprobante autorizado'}.`)
+      return
+    }
+
+    const amount = financials?.total || selectedSale.total
+    const documentLabel = [
+      orderDetail?.buyer?.documentType,
+      orderDetail?.buyer?.documentNumber,
+    ].filter(Boolean).join(' ') || 'Consumidor Final'
+
+    const confirmed = window.confirm(
+      `Vas a emitir una Factura C para esta venta.\n\n` +
+      `Cliente: ${orderDetail?.buyer?.name || selectedSale.customer || 'Cliente de Mercado Libre'}\n` +
+      `Documento: ${documentLabel}\n` +
+      `Venta ML: ${orderId}\n` +
+      `Importe: ${formatCurrency(amount)}\n\n` +
+      `Ambiente actual: HOMOLOGACIÓN.\n` +
+      `Este comprobante usa datos reales de la venta, pero todavía no tiene validez fiscal de producción.\n\n` +
+      `¿Querés continuar?`,
+    )
+
+    if (!confirmed) return
+
+    setInvoiceLoading(true)
+    setInvoiceError('')
+    setNotice('')
+
+    try {
+      const payload = await api('/arca/sale-invoice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orderId,
+          confirmation: `EMITIR_VENTA_${orderId}`,
+        }),
+      })
+
+      const invoice = payload.invoice
+      setSaleInvoices((current) => ({ ...current, [orderId]: invoice }))
+      setSales((current) =>
+        current.map((sale) =>
+          String(sale.id) === orderId
+            ? { ...sale, status: 'invoiced', statusLabel: 'Facturada' }
+            : sale,
+        ),
+      )
+      setNotice(
+        `Venta facturada correctamente: ${invoice?.voucher?.formattedNumber || 'comprobante autorizado'}.`,
+      )
+    } catch (error) {
+      setInvoiceError(error.message)
+      setNotice(error.message)
+    } finally {
+      setInvoiceLoading(false)
+    }
+  }
+
   const detailName = orderDetail?.buyer?.name || selectedSale?.customer
   const documentType = orderDetail?.buyer?.documentType || selectedSale?.documentType
   const documentNumber = orderDetail?.buyer?.documentNumber || selectedSale?.documentNumber
   const detailItems = orderDetail?.items?.length ? orderDetail.items : selectedSale?.items || []
   const address = orderDetail?.address
   const primaryPayment = orderDetail?.payments?.[0]
+  const selectedInvoice = selectedSale ? saleInvoices[String(selectedSale.id)] : null
 
   return (
     <main className="workspace">
@@ -397,13 +486,48 @@ function Home() {
 
               <div className="detail-block">
                 <div className="section-label">Dinero de la operación</div>
-                <div className="money-breakdown">
-                  <div><span>Total pagado</span><strong>{formatCurrency(financials?.total || selectedSale.total)}</strong></div>
-                  <div><span>Comisión de Mercado Libre</span><strong className="money-negative">− {formatCurrency(financials?.marketplaceFees || 0)}</strong></div>
-                  <div><span>Costo de envío a tu cargo</span><strong className="money-negative">− {formatCurrency(financials?.shippingCost || 0)}</strong></div>
-                  <div><span>Impuestos informados</span><strong className="money-negative">− {formatCurrency(financials?.taxes || 0)}</strong></div>
-                  <div className="money-net">
-                    <span>{financials?.netIsEstimated ? 'Neto estimado' : 'Neto recibido'}</span>
+                <div className="financial-card">
+                  <div className="financial-hero">
+                    <div>
+                      <span>Total pagado por el comprador</span>
+                      <strong>{formatCurrency(financials?.total || selectedSale.total)}</strong>
+                    </div>
+                    <span className="financial-currency">ARS</span>
+                  </div>
+
+                  <div className="financial-progress" aria-label="Distribución del dinero">
+                    <span style={{ width: `${financials?.netPercent || 100}%` }} />
+                  </div>
+
+                  <div className="financial-caption">
+                    <span>{(financials?.netPercent || 100).toFixed(1)}% queda en la cuenta</span>
+                    <span>{(100 - (financials?.netPercent || 100)).toFixed(1)}% descuentos</span>
+                  </div>
+
+                  <div className="financial-rows">
+                    <div>
+                      <span>Comisión de Mercado Libre <small>{financials?.commissionPercent ? `${financials.commissionPercent.toFixed(1)}%` : ''}</small></span>
+                      <strong className="money-negative">− {formatCurrency(financials?.marketplaceFees || 0)}</strong>
+                    </div>
+                    <div>
+                      <span>Costo de envío a tu cargo</span>
+                      <strong className="money-negative">− {formatCurrency(financials?.shippingCost || 0)}</strong>
+                    </div>
+                    <div>
+                      <span>Impuestos informados</span>
+                      <strong className="money-negative">− {formatCurrency(financials?.taxes || 0)}</strong>
+                    </div>
+                    <div className="financial-deductions">
+                      <span>Descuentos totales</span>
+                      <strong>− {formatCurrency(financials?.totalDeductions || 0)}</strong>
+                    </div>
+                  </div>
+
+                  <div className="financial-net">
+                    <div>
+                      <span>{financials?.netIsEstimated ? 'Neto estimado' : 'Neto recibido'}</span>
+                      <small>Después de comisión, envío e impuestos</small>
+                    </div>
                     <strong>{formatCurrency(financials?.netAmount || selectedSale.total)}</strong>
                   </div>
                 </div>
@@ -431,24 +555,40 @@ function Home() {
                     value={invoiceTypes[selectedSale.id] || 'automatic'}
                     onChange={(event) => setInvoiceTypes((current) => ({ ...current, [selectedSale.id]: event.target.value }))}
                   >
-                    <option value="automatic">Automático</option>
-                    <option value="A">Factura A</option>
-                    <option value="C">Consumidor final / Factura C</option>
+                    <option value="automatic">Automático · Factura C</option>
+                    <option value="C">Factura C</option>
                   </select>
                 </label>
-                <small className="financial-note">La opción queda guardada. Al conectar ARCA, Panadero usará esta selección para emitir el comprobante.</small>
+                <small className="financial-note">La cuenta emisora está configurada para Factura C. Si el comprador informa CUIT, se conserva como receptor Responsable Inscripto.</small>
               </div>
 
               <div className="detail-block activity-block">
                 <div className="section-label">Actividad</div>
                 <div className="activity-item"><span className="activity-dot" /><div><strong>Venta recibida</strong><small>Mercado Libre</small></div></div>
-                <div className="activity-item muted"><span className="activity-dot" /><div><strong>Esperando facturación</strong><small>Panadero está listo para continuar</small></div></div>
+                {selectedInvoice ? (
+                  <div className="activity-item invoiced-activity"><span className="activity-dot" /><div><strong>Factura autorizada</strong><small>{selectedInvoice.voucher?.formattedNumber} · CAE {selectedInvoice.cae}</small></div></div>
+                ) : (
+                  <div className="activity-item muted"><span className="activity-dot" /><div><strong>Esperando facturación</strong><small>Panadero está listo para continuar</small></div></div>
+                )}
               </div>
+
+              {invoiceError && <div className="invoice-action-error">{invoiceError}</div>}
 
               <div className="detail-actions">
                 <button className="ghost-button" type="button">Marcar para revisar</button>
-                <button className="primary-button wide" type="button">
-                  {selectedSale.status === 'invoiced' ? 'Ver factura' : selectedSale.status === 'review' ? 'Revisar datos' : 'Facturar venta'}
+                <button
+                  className="primary-button wide"
+                  type="button"
+                  onClick={handleInvoiceSale}
+                  disabled={invoiceLoading || detailLoading || !orderDetail || Boolean(selectedInvoice)}
+                >
+                  {selectedInvoice
+                    ? `Facturada · ${selectedInvoice.voucher?.formattedNumber || ''}`
+                    : invoiceLoading
+                      ? 'Solicitando CAE…'
+                      : selectedSale.status === 'review'
+                        ? 'Revisar datos'
+                        : 'Facturar venta'}
                 </button>
               </div>
             </>

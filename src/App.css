@@ -454,3 +454,157 @@ body,
 .arca-invoice-result.error > p { margin: 8px 0 0; color: var(--muted); font-size: calc(10px * var(--font-scale)); line-height: 1.5; }
 @media (max-width: 1120px) { .arca-test-form { grid-template-columns: repeat(2, minmax(0, 1fr)); } .arca-issue-button { width: 100%; } }
 @media (max-width: 720px) { .arca-test-title { flex-direction: column; } .arca-test-form { grid-template-columns: 1fr; } .arca-invoice-result dl { grid-template-columns: 1fr; } }
+
+
+/* ===== RESUMEN FINANCIERO DE LA VENTA ===== */
+.financial-card {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+}
+
+.financial-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px 18px 14px;
+}
+
+.financial-hero span,
+.financial-net span {
+  display: block;
+  color: var(--muted);
+  font-size: calc(9px * var(--font-scale));
+}
+
+.financial-hero strong {
+  display: block;
+  margin-top: 6px;
+  color: var(--text);
+  font-size: calc(24px * var(--font-scale));
+  letter-spacing: -.035em;
+}
+
+.financial-currency {
+  padding: 5px 8px;
+  color: var(--accent) !important;
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+  border-radius: 999px;
+  font-weight: 800;
+}
+
+.financial-progress {
+  height: 7px;
+  margin: 0 18px;
+  overflow: hidden;
+  background: rgba(223, 119, 119, .16);
+  border-radius: 999px;
+}
+
+.financial-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--green);
+  border-radius: inherit;
+}
+
+.financial-caption {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 18px 15px;
+  color: var(--subtle);
+  font-size: calc(8px * var(--font-scale));
+}
+
+.financial-rows {
+  padding: 2px 18px 12px;
+}
+
+.financial-rows > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  min-height: 35px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.financial-rows span {
+  color: var(--muted);
+  font-size: calc(10px * var(--font-scale));
+}
+
+.financial-rows span small {
+  margin-left: 6px;
+  color: var(--subtle);
+  font-size: calc(8px * var(--font-scale));
+}
+
+.financial-rows strong {
+  flex: 0 0 auto;
+  color: var(--text);
+  font-size: calc(10px * var(--font-scale));
+}
+
+.money-negative {
+  color: var(--red) !important;
+}
+
+.financial-rows .financial-deductions {
+  margin-top: 3px;
+  border-top: 1px dashed var(--line);
+  font-weight: 700;
+}
+
+.financial-net {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px 18px;
+  background: rgba(103, 197, 139, .075);
+  border-top: 1px solid rgba(103, 197, 139, .22);
+}
+
+.financial-net small {
+  display: block;
+  margin-top: 4px;
+  color: var(--subtle);
+  font-size: calc(8px * var(--font-scale));
+}
+
+.financial-net > strong {
+  color: var(--green);
+  font-size: calc(20px * var(--font-scale));
+  letter-spacing: -.025em;
+}
+
+.invoice-action-error {
+  margin-top: 16px;
+  padding: 11px 12px;
+  color: var(--red);
+  background: rgba(223, 119, 119, .08);
+  border: 1px solid rgba(223, 119, 119, .28);
+  border-radius: 8px;
+  font-size: calc(9px * var(--font-scale));
+  line-height: 1.45;
+}
+
+.invoiced-activity .activity-dot {
+  background: var(--green);
+}
+
+@media (max-width: 720px) {
+  .financial-hero strong {
+    font-size: calc(20px * var(--font-scale));
+  }
+
+  .financial-net {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
