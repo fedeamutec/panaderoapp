@@ -48,15 +48,52 @@ function formatMoney(value) {
 }
 
 function getInvoiceData(payload) {
-  const source = payload?.invoice || payload?.result || payload?.data || payload?.response || payload || {}
+  const root = payload && typeof payload === 'object' ? payload : {}
+  const voucher = root.voucher && typeof root.voucher === 'object' ? root.voucher : {}
+  const nestedSource = [root.invoice, root.data, root.response].find(
+    (value) => value && typeof value === 'object',
+  ) || {}
 
   return {
-    voucherNumber: source.voucherNumber ?? source.cbteNro ?? source.CbteDesde ?? source.number ?? null,
-    formattedNumber: source.formattedNumber ?? source.invoiceNumber ?? source.comprobante ?? null,
-    cae: source.cae ?? source.CAE ?? source.authorizationCode ?? null,
-    caeExpirationDate: source.caeExpirationDate ?? source.CAEFchVto ?? source.caeDueDate ?? null,
-    issueDate: source.issueDate ?? source.cbteFch ?? source.CbteFch ?? source.date ?? null,
-    amount: source.amount ?? source.totalAmount ?? source.ImpTotal ?? null,
+    voucherNumber:
+      voucher.voucherNumber ??
+      nestedSource.voucherNumber ??
+      nestedSource.cbteNro ??
+      nestedSource.CbteDesde ??
+      nestedSource.number ??
+      null,
+    formattedNumber:
+      voucher.formattedNumber ??
+      nestedSource.formattedNumber ??
+      nestedSource.invoiceNumber ??
+      nestedSource.comprobante ??
+      null,
+    cae:
+      root.cae ??
+      nestedSource.cae ??
+      nestedSource.CAE ??
+      nestedSource.authorizationCode ??
+      null,
+    caeExpirationDate:
+      root.caeExpirationDate ??
+      nestedSource.caeExpirationDate ??
+      nestedSource.CAEFchVto ??
+      nestedSource.caeDueDate ??
+      null,
+    issueDate:
+      voucher.date ??
+      nestedSource.issueDate ??
+      nestedSource.cbteFch ??
+      nestedSource.CbteFch ??
+      nestedSource.date ??
+      null,
+    amount:
+      voucher.amount ??
+      nestedSource.amount ??
+      nestedSource.totalAmount ??
+      nestedSource.ImpTotal ??
+      null,
+    result: root.result ?? nestedSource.result ?? nestedSource.Resultado ?? null,
   }
 }
 
