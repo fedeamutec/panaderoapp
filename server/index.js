@@ -188,6 +188,7 @@ app.post('/api/arca/sale-invoice', async (req, res) => {
       pointOfSale: ARCA_POINT_OF_SALE,
       amount,
       requestedType: req.body?.invoiceType || 'automatic',
+      vatRate: req.body?.vatRate,
       documentType: buyer.documentType,
       documentNumber: buyer.documentNumber,
       confirmation,

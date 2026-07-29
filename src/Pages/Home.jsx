@@ -76,6 +76,9 @@ function Home() {
   const [invoiceTypes, setInvoiceTypes] = useState(() => {
     try { return JSON.parse(localStorage.getItem('panadero-invoice-types') || '{}') } catch { return {} }
   })
+  const [invoiceVatRates, setInvoiceVatRates] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('panadero-invoice-vat-rates') || '{}') } catch { return {} }
+  })
   const [saleInvoices, setSaleInvoices] = useState({})
   const [invoiceLoading, setInvoiceLoading] = useState(false)
   const [invoiceError, setInvoiceError] = useState('')
@@ -328,7 +331,7 @@ function Home() {
       `Documento: ${documentLabel}\n` +
       `Venta ML: ${orderId}\n` +
       `Importe total: ${formatCurrency(amount)}\n` +
-      `IVA configurado: 21%\n\n` +
+      `IVA seleccionado: ${selectedVatRate}%\n\n` +
       `Ambiente actual: HOMOLOGACIÓN.\n` +
       `Todavía no tiene validez fiscal de producción.\n\n` +
       `¿Querés continuar?`,
@@ -347,6 +350,7 @@ function Home() {
         body: JSON.stringify({
           orderId,
           invoiceType: selectedType,
+          vatRate: selectedVatRate,
           confirmation: `EMITIR_VENTA_${orderId}`,
         }),
       })
@@ -382,6 +386,9 @@ function Home() {
     ? invoiceTypes[selectedSale.id] || 'automatic'
     : 'automatic'
   const recommendedInvoiceType = automaticInvoiceType(documentType, documentNumber)
+  const selectedVatRate = selectedSale
+    ? Number(invoiceVatRates[selectedSale.id] || 21)
+    : 21
 
 
   return (
@@ -489,6 +496,20 @@ function Home() {
                 </div>
               </div>
 
+              <div className="detail-block product-detail-block">
+                <div className="section-label">Producto</div>
+                {(detailItems.length ? detailItems : [{ title: 'Producto Mercado Libre', quantity: 1 }]).map((item, index) => (
+                  <div className="product-line" key={`${item.id || 'item'}-${index}`}>
+                    <div className="product-thumb">ML</div>
+                    <div className="product-copy">
+                      <strong>{item.title}</strong>
+                      <small>{item.quantity || 1} unidad{item.quantity === 1 ? '' : 'es'}</small>
+                    </div>
+                    <strong className="product-price">{item.unitPrice ? formatCurrency(item.unitPrice * (item.quantity || 1)) : ''}</strong>
+                  </div>
+                ))}
+              </div>
+
               <div className="detail-block">
                 <div className="section-label">Entrega</div>
                 <div className="address-card">
@@ -497,20 +518,6 @@ function Home() {
                   <span>{[address?.zipCode && `CP ${address.zipCode}`, address?.country].filter(Boolean).join(' · ')}</span>
                   {address?.comment && <small>Referencia: {address.comment}</small>}
                 </div>
-              </div>
-
-              <div className="detail-block">
-                <div className="section-label">Producto</div>
-                {(detailItems.length ? detailItems : [{ title: 'Producto Mercado Libre', quantity: 1 }]).map((item, index) => (
-                  <div className="product-line" key={`${item.id || 'item'}-${index}`}>
-                    <div className="product-thumb">ML</div>
-                    <div>
-                      <strong>{item.title}</strong>
-                      <small>{item.quantity || 1} unidad{item.quantity === 1 ? '' : 'es'}</small>
-                    </div>
-                    <strong>{item.unitPrice ? formatCurrency(item.unitPrice * (item.quantity || 1)) : ''}</strong>
-                  </div>
-                ))}
               </div>
 
               <div className="detail-block">
@@ -579,45 +586,72 @@ function Home() {
               <div className="detail-block invoice-type-block">
                 <div className="section-label">Tipo de comprobante</div>
 
-                <div className="invoice-type-segmented" role="group" aria-label="Tipo de comprobante">
-                  {[
-                    ['automatic', 'Automático'],
-                    ['A', 'Factura A'],
-                    ['B', 'Factura B'],
-                  ].map(([value, label]) => (
-                    <button
-                      key={value}
-                      type="button"
-                      className={selectedInvoiceType === value ? 'active' : ''}
-                      onClick={() =>
-                        setInvoiceTypes((current) => ({
-                          ...current,
-                          [selectedSale.id]: value,
-                        }))
-                      }
-                      disabled={Boolean(selectedInvoice)}
-                    >
-                      <span>{label}</span>
-                      {value === 'automatic' && (
-                        <small>Recomienda {recommendedInvoiceType}</small>
-                      )}
-                    </button>
-                  ))}
+                <div className="invoice-control-row">
+                  <div className="invoice-control-group">
+                    <span className="invoice-control-label">Comprobante</span>
+                    <div className="invoice-type-segmented compact" role="group" aria-label="Tipo de comprobante">
+                      {[
+                        ['automatic', 'Automático'],
+                        ['A', 'Factura A'],
+                        ['B', 'Factura B'],
+                      ].map(([value, label]) => (
+                        <button
+                          key={value}
+                          type="button"
+                          className={selectedInvoiceType === value ? 'active' : ''}
+                          onClick={() =>
+                            setInvoiceTypes((current) => ({
+                              ...current,
+                              [selectedSale.id]: value,
+                            }))
+                          }
+                          disabled={Boolean(selectedInvoice)}
+                        >
+                          <span>{label}</span>
+                          {value === 'automatic' && (
+                            <small>Recomienda {recommendedInvoiceType}</small>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="invoice-control-group vat-control-group">
+                    <span className="invoice-control-label">IVA</span>
+                    <div className="vat-rate-segmented" role="group" aria-label="Alícuota de IVA">
+                      {[21, 10.5].map((rate) => (
+                        <button
+                          key={rate}
+                          type="button"
+                          className={selectedVatRate === rate ? 'active' : ''}
+                          onClick={() =>
+                            setInvoiceVatRates((current) => ({
+                              ...current,
+                              [selectedSale.id]: rate,
+                            }))
+                          }
+                          disabled={Boolean(selectedInvoice)}
+                        >
+                          IVA {String(rate).replace('.', ',')}%
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
 
-                <div className="invoice-recommendation">
+                <div className="invoice-recommendation compact">
                   <span>Recomendación de Panadero</span>
                   <strong>{invoiceTypeLabel(recommendedInvoiceType)}</strong>
                   <small>
                     {recommendedInvoiceType === 'A'
-                      ? 'Se detectó CUIT válido. Receptor Responsable Inscripto.'
-                      : 'Se emitirá Factura B para consumidor final.'}
+                      ? 'CUIT válido detectado.'
+                      : 'Consumidor final.'}
+                    {' · '}IVA {String(selectedVatRate).replace('.', ',')}%
                   </small>
                 </div>
 
-                <small className="financial-note">
-                  MONOSTOCK está configurado como Responsable Inscripto. Automático elige
-                  Factura A con CUIT válido y Factura B en los demás casos. IVA configurado: 21%.
+                <small className="issuer-note">
+                  Emisor Responsable Inscripto. Automático elige A con CUIT válido y B en los demás casos.
                 </small>
               </div>
 

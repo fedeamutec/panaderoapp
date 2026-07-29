@@ -369,8 +369,8 @@ function recipientVatConditionIdFor({ voucherType }) {
   return voucherType === 1 ? 1 : 5
 }
 
-function calculateVatBreakdown(grossAmount) {
-  const rate = Number(ARCA_VAT_RATE)
+function calculateVatBreakdown(grossAmount, requestedRate = ARCA_VAT_RATE) {
+  const rate = Number(requestedRate)
 
   if (!Number.isFinite(rate) || rate <= 0) {
     throw new Error('ARCA_VAT_RATE debe ser un porcentaje mayor que cero.')
@@ -400,6 +400,7 @@ export async function createSaleInvoice({
   pointOfSale,
   amount,
   requestedType = 'automatic',
+  vatRate = ARCA_VAT_RATE,
   documentType,
   documentNumber,
   confirmation,
@@ -424,7 +425,7 @@ export async function createSaleInvoice({
     documentNumber: docNro,
   })
   const recipientVatConditionId = recipientVatConditionIdFor({ voucherType })
-  const { rate, vatId, netAmount, vatAmount } = calculateVatBreakdown(total)
+  const { rate, vatId, netAmount, vatAmount } = calculateVatBreakdown(total, vatRate)
 
   if (!Number.isInteger(ptoVta) || ptoVta <= 0) {
     throw new Error('El punto de venta debe ser un número entero mayor que cero.')
