@@ -424,192 +424,33 @@ body,
 .arca-connection-result dd { margin: 0; color: var(--text); font-size: calc(10px * var(--font-scale)); }
 .arca-connection-result p { margin: 9px 0 0; color: var(--muted); font-size: calc(10px * var(--font-scale)); line-height: 1.5; }
 
-
-/* ===== FACTURA C DE PRUEBA ===== */
-.test-invoice-controls {
-  display: flex;
-  align-items: flex-end;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.test-amount-field {
-  display: grid;
-  gap: 7px;
-  min-width: 190px;
-}
-
-.test-amount-field > span {
-  color: var(--subtle);
-  font-size: calc(9px * var(--font-scale));
-  font-weight: 700;
-  letter-spacing: .05em;
-  text-transform: uppercase;
-}
-
-.test-amount-field > div {
-  display: flex;
-  height: 38px;
-  align-items: center;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: var(--panel);
-}
-
-.test-amount-field > div:focus-within {
-  border-color: var(--accent);
-}
-
-.test-amount-field strong {
-  display: grid;
-  width: 38px;
-  height: 100%;
-  place-items: center;
-  color: var(--muted);
-  border-right: 1px solid var(--line);
-  background: var(--panel-2);
-  font-size: calc(11px * var(--font-scale));
-}
-
-.test-amount-field input {
-  width: 150px;
-  height: 100%;
-  padding: 0 11px;
-  color: var(--text);
-  background: transparent;
-  border: 0;
-  outline: 0;
-  font: inherit;
-  font-size: calc(11px * var(--font-scale));
-}
-
-.test-invoice-warning {
-  display: block;
-  margin-top: 10px;
-  color: var(--subtle);
-  font-size: calc(9px * var(--font-scale));
-  line-height: 1.45;
-}
-
-.test-invoice-result {
-  max-width: 680px;
-  margin-top: 15px;
-  padding: 15px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  background: var(--panel);
-}
-
-.test-invoice-result.success {
-  border-color: rgba(103,197,139,.35);
-  box-shadow: inset 3px 0 0 rgba(103,197,139,.7);
-}
-
-.test-invoice-result.error {
-  border-color: rgba(223,119,119,.35);
-  box-shadow: inset 3px 0 0 rgba(223,119,119,.7);
-}
-
-.test-invoice-result-heading {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 14px;
-  padding-bottom: 13px;
-  border-bottom: 1px solid var(--line-soft);
-}
-
-.test-invoice-result-heading span,
-.test-invoice-result-heading strong {
-  display: block;
-}
-
-.test-invoice-result-heading > div > span {
-  color: var(--green);
-  font-size: calc(9px * var(--font-scale));
-  font-weight: 700;
-  letter-spacing: .05em;
-  text-transform: uppercase;
-}
-
-.test-invoice-result-heading > div > strong {
-  margin-top: 5px;
-  font-size: calc(16px * var(--font-scale));
-  letter-spacing: .01em;
-}
-
-.cae-badge {
-  display: inline-flex !important;
-  align-items: center;
-  min-height: 24px;
-  padding: 0 9px;
-  color: var(--green);
-  background: rgba(103,197,139,.1);
-  border: 1px solid rgba(103,197,139,.3);
-  border-radius: 999px;
-  font-size: calc(8px * var(--font-scale));
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: .05em;
-}
-
-.test-invoice-result dl {
-  display: grid;
-  gap: 9px;
-  margin: 13px 0 0;
-}
-
-.test-invoice-result dl > div {
-  display: grid;
-  grid-template-columns: 150px minmax(0, 1fr);
-  gap: 16px;
-}
-
-.test-invoice-result dt {
-  color: var(--subtle);
-  font-size: calc(9px * var(--font-scale));
-}
-
-.test-invoice-result dd {
-  margin: 0;
-  color: var(--text);
-  font-size: calc(10px * var(--font-scale));
-}
-
-.test-invoice-result > strong {
-  color: var(--red);
-  font-size: calc(11px * var(--font-scale));
-}
-
-.test-invoice-result > p {
-  margin: 8px 0 0;
-  color: var(--muted);
-  font-size: calc(10px * var(--font-scale));
-  line-height: 1.5;
-}
-
-.mono-value {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  letter-spacing: .03em;
-}
-
-@media (max-width: 700px) {
-  .test-invoice-controls {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .test-amount-field {
-    min-width: 0;
-  }
-
-  .test-amount-field input {
-    width: 100%;
-  }
-
-  .test-invoice-result dl > div {
-    grid-template-columns: 1fr;
-    gap: 3px;
-  }
-}
+/* ===== EMISIÓN DE FACTURA C DE PRUEBA ===== */
+.arca-test-invoice-card { margin-bottom: 24px; }
+.arca-test-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.test-environment-badge { flex: 0 0 auto; padding: 6px 9px; color: var(--accent); background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--line)); border-radius: 999px; font-size: calc(8px * var(--font-scale)); font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+.arca-test-form { display: grid; grid-template-columns: minmax(170px, 1.1fr) minmax(150px, .9fr) minmax(170px, 1fr) auto; align-items: end; gap: 10px; max-width: 860px; margin-top: 4px; }
+.arca-amount-field { display: grid; gap: 7px; }
+.arca-amount-field > span, .arca-test-summary span { color: var(--subtle); font-size: calc(9px * var(--font-scale)); }
+.arca-amount-field > div { display: flex; height: 40px; align-items: center; overflow: hidden; background: var(--panel); border: 1px solid var(--line); border-radius: 7px; }
+.arca-amount-field > div:focus-within { border-color: var(--accent); }
+.arca-amount-field strong { display: grid; width: 38px; height: 100%; place-items: center; color: var(--muted); background: var(--panel-2); border-right: 1px solid var(--line); font-size: calc(11px * var(--font-scale)); }
+.arca-amount-field input { width: 100%; min-width: 0; height: 100%; padding: 0 11px; color: var(--text); background: transparent; border: 0; outline: 0; font: inherit; font-size: calc(11px * var(--font-scale)); font-weight: 650; }
+.arca-amount-field input::-webkit-outer-spin-button, .arca-amount-field input::-webkit-inner-spin-button { margin: 0; appearance: none; }
+.arca-test-summary { display: grid; min-height: 40px; align-content: center; gap: 5px; padding: 0 11px; background: var(--panel); border: 1px solid var(--line); border-radius: 7px; }
+.arca-test-summary strong { color: var(--text); font-size: calc(10px * var(--font-scale)); font-weight: 650; }
+.arca-issue-button { min-width: 190px; height: 40px; }
+.arca-test-help { margin: 10px 0 0 !important; color: var(--subtle) !important; font-size: calc(9px * var(--font-scale)) !important; }
+.arca-invoice-result { max-width: 860px; margin-top: 15px; padding: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 9px; }
+.arca-invoice-result.success { border-color: rgba(103, 197, 139, .38); box-shadow: inset 3px 0 rgba(103, 197, 139, .72); }
+.arca-invoice-result.error { border-color: rgba(223, 119, 119, .38); box-shadow: inset 3px 0 rgba(223, 119, 119, .72); }
+.arca-invoice-result-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.arca-invoice-result-header > div > span, .arca-invoice-result dt { display: block; color: var(--subtle); font-size: calc(9px * var(--font-scale)); }
+.arca-invoice-result-header > div > strong { display: block; margin-top: 5px; color: var(--text); font-size: calc(17px * var(--font-scale)); letter-spacing: -.02em; }
+.arca-authorized-badge { flex: 0 0 auto; padding: 6px 9px; color: var(--green); background: rgba(103, 197, 139, .1); border: 1px solid rgba(103, 197, 139, .3); border-radius: 999px; font-size: calc(9px * var(--font-scale)); font-weight: 800; }
+.arca-invoice-result dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px 24px; margin: 17px 0 0; padding-top: 15px; border-top: 1px solid var(--line); }
+.arca-invoice-result dl > div { min-width: 0; }
+.arca-invoice-result dd { margin: 5px 0 0; overflow-wrap: anywhere; color: var(--text); font-size: calc(11px * var(--font-scale)); font-weight: 650; }
+.arca-invoice-result.error > strong { color: var(--red); font-size: calc(11px * var(--font-scale)); }
+.arca-invoice-result.error > p { margin: 8px 0 0; color: var(--muted); font-size: calc(10px * var(--font-scale)); line-height: 1.5; }
+@media (max-width: 1120px) { .arca-test-form { grid-template-columns: repeat(2, minmax(0, 1fr)); } .arca-issue-button { width: 100%; } }
+@media (max-width: 720px) { .arca-test-title { flex-direction: column; } .arca-test-form { grid-template-columns: 1fr; } .arca-invoice-result dl { grid-template-columns: 1fr; } }
