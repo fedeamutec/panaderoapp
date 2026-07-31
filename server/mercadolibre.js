@@ -288,18 +288,61 @@ export async function getStatus() {
   }
 }
 
-export async function syncOrders() {
+export async function syncOrders({ page = 1, pageSize = 50 } = {}) {
   const store = await readStore()
   if (!store.account?.id) throw new Error('Mercado Libre no está conectado')
-  const result = await apiFetch(`/orders/search?seller=${encodeURIComponent(store.account.id)}&sort=date_desc&limit=50`)
+
+  const safePage = Math.max(1, Number.parseInt(page, 10) || 1)
+  const safePageSize = Math.min(50, Math.max(1, Number.parseInt(pageSize, 10) || 50))
+  const offset = (safePage - 1) * safePageSize
+
+  const query = new URLSearchParams({
+    seller: String(store.account.id),
+    sort: 'date_desc',
+    limit: String(safePageSize),
+    offset: String(offset),
+  })
+
+  const result = await apiFetch(`/orders/search?${query.toString()}`)
   const orders = (result.results || []).map(normalizeOrder)
-  await updateStore((current) => ({ ...current, orders, lastSyncAt: new Date().toISOString() }))
-  return { orders, total: result.paging?.total ?? orders.length }
+  const total = Number(result.paging?.total ?? orders.length)
+  const totalPages = Math.max(1, Math.ceil(total / safePageSize))
+  const lastSyncAt = new Date().toISOString()
+
+  const pagination = {
+    page: safePage,
+    pageSize: safePageSize,
+    total,
+    totalPages,
+    offset,
+  }
+
+  await updateStore((current) => ({
+    ...current,
+    orders,
+    pagination,
+    lastSyncAt,
+  }))
+
+  return { orders, ...pagination, lastSyncAt }
 }
 
 export async function getOrders() {
   const store = await readStore()
-  return { orders: store.orders || [], lastSyncAt: store.lastSyncAt || null }
+  const orders = store.orders || []
+  const pagination = store.pagination || {
+    page: 1,
+    pageSize: 50,
+    total: orders.length,
+    totalPages: Math.max(1, Math.ceil(orders.length / 50)),
+    offset: 0,
+  }
+
+  return {
+    orders,
+    ...pagination,
+    lastSyncAt: store.lastSyncAt || null,
+  }
 }
 
 export async function disconnect() {
