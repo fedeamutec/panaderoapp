@@ -405,12 +405,6 @@ export async function createSaleInvoice({
   documentNumber,
   confirmation,
 }) {
-  if (ARCA_ENV === 'production') {
-    throw new Error(
-      'La facturación de ventas está bloqueada en producción hasta instalar el certificado y punto de venta productivos.',
-    )
-  }
-
   if (!String(confirmation || '').startsWith('EMITIR_VENTA_')) {
     throw new Error('Falta la confirmación de seguridad para facturar la venta.')
   }

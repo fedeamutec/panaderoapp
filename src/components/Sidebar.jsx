@@ -37,7 +37,7 @@ function Sidebar({ activeSection, onSectionChange, salesCount = 0, settingsOpen,
   return (
     <aside className="sidebar">
       <div className="window-dots" aria-hidden="true"><span/><span/><span/></div>
-      <div className="sidebar-brand"><div className="brand-mark">P</div><div><strong>Panadero</strong><small>Facturación inteligente</small></div></div>
+      <div className="sidebar-brand"><div><strong>Panadero</strong><small>Facturación inteligente</small></div></div>
       <nav className="sidebar-navigation" aria-label="Navegación principal">
         <span className="nav-label">Espacio de trabajo</span>
         {mainItems.map(([icon, label]) => {

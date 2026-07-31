@@ -23,6 +23,7 @@ import {
   getVoucherTypes,
 } from './arca/wsfe.js'
 import { ARCA_DATA_DIR, ARCA_POINT_OF_SALE } from './arca/config.js'
+import { buildInvoicePdf } from './invoicePdf.js'
 
 const app = express()
 const port = Number(process.env.API_PORT || 3001)
@@ -201,6 +202,12 @@ app.post('/api/arca/sale-invoice', async (req, res) => {
         documentType: buyer.documentType || null,
         documentNumber: buyer.documentNumber || null,
       },
+      saleSnapshot: {
+        items: Array.isArray(detail.items) ? detail.items : [],
+        address: detail.address || null,
+        amounts: detail.amounts || { total: amount },
+        accountNickname: detail.accountNickname || null,
+      },
       createdAt: new Date().toISOString(),
       environment: result.environment,
       voucher: result.voucher,
@@ -217,6 +224,27 @@ app.post('/api/arca/sale-invoice', async (req, res) => {
   } catch (error) {
     console.error('ARCA sale invoice error:', error)
     res.status(400).json({ ok: false, error: error.message })
+  }
+})
+
+app.get('/api/arca/sale-invoices/:orderId/pdf', async (req, res) => {
+  try {
+    const orderId = String(req.params.orderId || '').trim()
+    const invoices = await readSaleInvoices()
+    const invoice = invoices.find((item) => String(item.orderId) === orderId)
+    if (!invoice) return res.status(404).json({ ok: false, error: 'No se encontró la factura solicitada.' })
+
+    const pdf = buildInvoicePdf(invoice)
+    const filename = `${invoice.voucher?.voucherTypeDescription || 'Factura'}-${invoice.voucher?.formattedNumber || orderId}.pdf`
+      .replace(/[^a-zA-Z0-9._-]+/g, '-')
+
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', `${req.query.download === '1' ? 'attachment' : 'inline'}; filename="${filename}"`)
+    res.setHeader('Cache-Control', 'private, no-store')
+    res.send(pdf)
+  } catch (error) {
+    console.error('Invoice PDF error:', error)
+    res.status(500).json({ ok: false, error: error.message })
   }
 })
 

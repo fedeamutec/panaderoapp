@@ -4,6 +4,7 @@ import SalesTable, { formatCurrency } from '../components/SalesTable'
 import { sales as demoSales } from '../Data/Sales'
 
 const API_BASE = 'https://api.panaderoapp.com/api'
+const ARCA_POINT_OF_SALE = 3
 
 const filters = [
   ['all', 'Todas'],
@@ -81,6 +82,7 @@ function Home() {
   })
   const [saleInvoices, setSaleInvoices] = useState({})
   const [invoiceLoading, setInvoiceLoading] = useState(false)
+  const [invoicePreparing, setInvoicePreparing] = useState(false)
   const [invoiceError, setInvoiceError] = useState('')
   const [invoiceModal, setInvoiceModal] = useState(null)
 
@@ -300,8 +302,8 @@ function Home() {
     }
   }
 
-  const handleInvoiceSale = () => {
-    if (!selectedSale || !orderDetail || invoiceLoading) return
+  const handleInvoiceSale = async () => {
+    if (!selectedSale || !orderDetail || invoiceLoading || invoicePreparing) return
 
     const orderId = String(selectedSale.id)
     const existingInvoice = saleInvoices[orderId]
@@ -328,18 +330,34 @@ function Home() {
       orderDetail?.buyer?.documentNumber,
     ].filter(Boolean).join(' ') || 'Consumidor final'
 
-    setInvoiceModal({
-      orderId,
-      amount,
-      selectedType,
-      resolvedType,
-      documentLabel,
-      customer:
-        orderDetail?.buyer?.name ||
-        selectedSale.customer ||
-        'Cliente de Mercado Libre',
-      vatRate: selectedVatRate,
-    })
+    setInvoicePreparing(true)
+    setInvoiceError('')
+    try {
+      const voucherType = resolvedType === 'A' ? 1 : 6
+      const sequence = await api(
+        `/arca/last-voucher?pointOfSale=${ARCA_POINT_OF_SALE}&voucherType=${voucherType}`,
+      )
+
+      setInvoiceModal({
+        orderId,
+        amount,
+        selectedType,
+        resolvedType,
+        documentLabel,
+        customer:
+          orderDetail?.buyer?.name ||
+          selectedSale.customer ||
+          'Cliente de Mercado Libre',
+        vatRate: selectedVatRate,
+        pointOfSale: ARCA_POINT_OF_SALE,
+        nextVoucherNumber: sequence.nextVoucherNumber,
+        nextFormattedNumber: `${String(ARCA_POINT_OF_SALE).padStart(4, '0')}-${String(sequence.nextVoucherNumber).padStart(8, '0')}`,
+      })
+    } catch (error) {
+      setInvoiceError(`No se pudo consultar la próxima numeración: ${error.message}`)
+    } finally {
+      setInvoicePreparing(false)
+    }
   }
 
   const closeInvoiceModal = () => {
@@ -401,7 +419,9 @@ function Home() {
   const selectedVatRate = selectedSale
     ? Number(invoiceVatRates[selectedSale.id] || 21)
     : 21
-
+  const selectedInvoicePdfUrl = selectedInvoice
+    ? `${API_BASE}/arca/sale-invoices/${encodeURIComponent(String(selectedSale.id))}/pdf`
+    : ''
 
   return (
     <main className="workspace">
@@ -671,7 +691,13 @@ function Home() {
                 <div className="section-label">Actividad</div>
                 <div className="activity-item"><span className="activity-dot" /><div><strong>Venta recibida</strong><small>Mercado Libre</small></div></div>
                 {selectedInvoice ? (
-                  <div className="activity-item invoiced-activity"><span className="activity-dot" /><div><strong>Factura autorizada</strong><small>{selectedInvoice.voucher?.formattedNumber} · CAE {selectedInvoice.cae}</small></div></div>
+                  <>
+                    <div className="activity-item invoiced-activity"><span className="activity-dot" /><div><strong>Factura autorizada</strong><small>{selectedInvoice.voucher?.formattedNumber} · CAE {selectedInvoice.cae}</small></div></div>
+                    <div className="invoice-issued-actions">
+                      <a className="ghost-button" href={selectedInvoicePdfUrl} target="_blank" rel="noreferrer">Vista previa</a>
+                      <a className="ghost-button" href={`${selectedInvoicePdfUrl}?download=1`}>Descargar PDF</a>
+                    </div>
+                  </>
                 ) : (
                   <div className="activity-item muted"><span className="activity-dot" /><div><strong>Esperando facturación</strong><small>Panadero está listo para continuar</small></div></div>
                 )}
@@ -685,12 +711,14 @@ function Home() {
                   className="primary-button wide"
                   type="button"
                   onClick={handleInvoiceSale}
-                  disabled={invoiceLoading || detailLoading || !orderDetail || Boolean(selectedInvoice)}
+                  disabled={invoiceLoading || invoicePreparing || detailLoading || !orderDetail || Boolean(selectedInvoice)}
                 >
                   {selectedInvoice
                     ? `Facturada · ${selectedInvoice.voucher?.formattedNumber || ''}`
-                    : invoiceLoading
-                      ? 'Solicitando CAE…'
+                    : invoicePreparing
+                      ? 'Consultando numeración…'
+                      : invoiceLoading
+                        ? 'Solicitando CAE…'
                       : selectedSale.status === 'review'
                         ? 'Revisar datos'
                         : 'Facturar venta'}
@@ -751,16 +779,27 @@ function Home() {
               </div>
             </div>
 
+            <div className="invoice-sequence">
+              <div>
+                <small>Punto de venta</small>
+                <strong>{String(invoiceModal.pointOfSale).padStart(4, '0')} · PANADERO</strong>
+              </div>
+              <div>
+                <small>Próximo comprobante</small>
+                <strong>{invoiceModal.nextFormattedNumber}</strong>
+              </div>
+            </div>
+
             <div className="invoice-modal-total">
               <span>Importe total</span>
               <strong>{formatCurrency(invoiceModal.amount)}</strong>
             </div>
 
-            <div className="invoice-modal-warning">
-              <strong>Ambiente de homologación</strong>
+            <div className="invoice-modal-warning production">
+              <strong>ARCA Producción</strong>
               <span>
-                Este comprobante se enviará a ARCA, pero todavía no tendrá validez fiscal
-                de producción.
+                Al confirmar, Panadero solicitará el CAE y emitirá un comprobante fiscal real.
+                Una factura autorizada no puede eliminarse; una corrección requiere el comprobante correspondiente.
               </span>
             </div>
 
