@@ -39,7 +39,7 @@ function Login({ onLogin }) {
           <small>Facturación inteligente</small>
         </header>
         <div className="login-copy">
-          <span>Acceso privado</span>
+          <span>Acceso privado a Panadero</span>
           <h1>Iniciar sesión</h1>
           <p>Ingresá con tu cuenta de Panadero para administrar Mercado Libre y ARCA.</p>
         </div>
