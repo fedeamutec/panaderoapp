@@ -5,7 +5,7 @@ import { formatCurrency } from '../components/SalesTable'
 const API_BASE = 'https://api.panaderoapp.com/api'
 
 async function api(path, options) {
-  const response = await fetch(`${API_BASE}${path}`, options)
+  const response = await fetch(`${API_BASE}${path}`, { ...options, credentials: 'include' })
   const payload = await response.json().catch(() => ({}))
   if (!response.ok) throw new Error(payload.error || 'No se pudo comunicar con Panadero API')
   return payload

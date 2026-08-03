@@ -30,7 +30,7 @@ const secondaryItems = [
 
 const themeLabels = { cursor: 'Cursor', black: 'Black', paper: 'Paper' }
 
-function Sidebar({ activeSection, onSectionChange, salesCount = 0, settingsOpen, onToggleSettings, theme, onThemeChange, fontScale, onFontScaleChange }) {
+function Sidebar({ activeSection, onSectionChange, salesCount = 0, settingsOpen, onToggleSettings, theme, onThemeChange, fontScale, onFontScaleChange, user, onLogout }) {
   const decreaseFont = () => onFontScaleChange((current) => Math.max(0.9, Number((current - 0.05).toFixed(2))))
   const increaseFont = () => onFontScaleChange((current) => Math.min(1.35, Number((current + 0.05).toFixed(2))))
 
@@ -52,7 +52,7 @@ function Sidebar({ activeSection, onSectionChange, salesCount = 0, settingsOpen,
         <button className={`sidebar-item ${settingsOpen ? 'active' : ''}`} type="button" onClick={onToggleSettings}><span className="sidebar-icon"><Icon name="settings"/></span><span>Configuración</span></button>
       </nav>
       {settingsOpen && <section className="appearance-panel" aria-label="Apariencia"><div className="appearance-heading"><div><strong>Apariencia</strong><small>Se guarda automáticamente</small></div><button type="button" onClick={onToggleSettings} aria-label="Cerrar">×</button></div><div className="appearance-group"><span className="appearance-label">Tema</span><div className="theme-options">{Object.keys(themeLabels).map((name) => <button key={name} type="button" className={`theme-option ${theme === name ? 'selected' : ''}`} onClick={() => onThemeChange(name)}><span className={`theme-preview ${name}`} aria-hidden="true"/><span>{themeLabels[name]}</span><span className="theme-check">{theme === name ? '●' : '○'}</span></button>)}</div></div><div className="appearance-group"><div className="font-size-heading"><span className="appearance-label">Tamaño de texto</span><strong>{Math.round(fontScale * 100)}%</strong></div><div className="font-size-controls"><button type="button" onClick={decreaseFont}>A−</button><button type="button" className="font-reset" onClick={() => onFontScaleChange(1.08)}>Restablecer</button><button type="button" onClick={increaseFont}>A+</button></div></div></section>}
-      <div className="sidebar-footer"><button className="profile-card" type="button"><span className="profile-avatar">FA</span><span className="profile-copy"><strong>Fede Amurin</strong><small>Administrador</small></span><span className="profile-menu">•••</span></button></div>
+      <div className="sidebar-footer"><div className="profile-card"><span className="profile-avatar">FA</span><span className="profile-copy"><strong>{user?.name || 'Fede Amurin'}</strong><small>{user?.role || 'Administrador'}</small></span><button className="logout-button" type="button" onClick={onLogout}>Salir</button></div></div>
     </aside>
   )
 }

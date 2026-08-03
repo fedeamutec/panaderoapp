@@ -24,13 +24,14 @@ import {
 } from './arca/wsfe.js'
 import { ARCA_DATA_DIR, ARCA_POINT_OF_SALE } from './arca/config.js'
 import { buildInvoicePdf } from './invoicePdf.js'
+import { authenticate, clearSessionCookie, createSessionCookie, getSession, requireAuth } from './auth.js'
 
 const app = express()
 const port = Number(process.env.API_PORT || 3001)
 const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
 const allowedOrigins = [...new Set([frontendUrl, 'https://panaderoapp.com', 'http://localhost:5173'])]
 
-app.use(cors({ origin: allowedOrigins, credentials: false }))
+app.use(cors({ origin: allowedOrigins, credentials: true }))
 app.use(express.json({ limit: '1mb' }))
 
 const saleInvoicesPath = path.join(ARCA_DATA_DIR, 'sale-invoices.json')
@@ -54,6 +55,45 @@ async function writeSaleInvoices(invoices) {
 }
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }))
+
+app.post('/api/auth/login', (req, res) => {
+  try {
+    const user = authenticate(req.body?.email, req.body?.password)
+    if (!user) return res.status(401).json({ ok: false, error: 'Correo o contraseña incorrectos.' })
+
+    const session = createSessionCookie(user)
+    res.setHeader('Set-Cookie', session.header)
+    res.json({ ok: true, user, expiresAt: session.expiresAt })
+  } catch (error) {
+    console.error('Login configuration error:', error)
+    res.status(503).json({ ok: false, error: error.message })
+  }
+})
+
+app.get('/api/auth/session', (req, res) => {
+  try {
+    const session = getSession(req)
+    if (!session) return res.status(401).json({ ok: false, authenticated: false })
+    res.json({
+      ok: true,
+      authenticated: true,
+      user: { email: session.email, name: session.name, role: session.role },
+      expiresAt: session.expiresAt,
+    })
+  } catch (error) {
+    res.status(503).json({ ok: false, authenticated: false, error: error.message })
+  }
+})
+
+app.post('/api/auth/logout', (_req, res) => {
+  res.setHeader('Set-Cookie', clearSessionCookie())
+  res.json({ ok: true })
+})
+
+app.use('/api', (req, res, next) => {
+  if (req.path === '/health' || req.path.startsWith('/auth/') || req.path === '/mercadolibre/callback') return next()
+  return requireAuth(req, res, next)
+})
 
 app.get('/api/arca/status', async (_req, res) => {
   try {
