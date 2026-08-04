@@ -464,6 +464,86 @@ function buildOrderDetail(order, shipment, billingInfo, fiscalInfo = {}) {
   }
 }
 
+
+export async function uploadFiscalDocument(orderId, pdfBuffer, filename = 'factura.pdf') {
+  const normalizedOrderId = String(orderId || '').trim()
+  if (!normalizedOrderId) throw new Error('Falta el ID de la venta')
+  if (!pdfBuffer) throw new Error('Falta el PDF de la factura')
+
+  const bytes = Buffer.isBuffer(pdfBuffer)
+    ? pdfBuffer
+    : Buffer.from(pdfBuffer)
+
+  if (!bytes.length) throw new Error('El PDF de la factura está vacío')
+  if (bytes.length > 1024 * 1024) {
+    throw new Error('Mercado Libre admite facturas PDF de hasta 1 MB')
+  }
+
+  const safeOrderId = encodeURIComponent(normalizedOrderId)
+  const order = await apiFetch(`/orders/${safeOrderId}`)
+  const packId = fiscalDocumentReference(order)
+
+  if (!packId) {
+    throw new Error('La venta no tiene order_id ni pack_id para adjuntar la factura')
+  }
+
+  const currentFiscalInfo = await readFiscalDocumentsForOrder(order)
+  if (currentFiscalInfo.invoiceAttached) {
+    return {
+      ok: true,
+      uploaded: false,
+      alreadyAttached: true,
+      packId,
+      ids: currentFiscalInfo.invoiceDocuments.map((document) => document.id),
+      documents: currentFiscalInfo.invoiceDocuments,
+    }
+  }
+
+  const token = await getAccessToken()
+  const form = new FormData()
+  const safeFilename = String(filename || 'factura.pdf')
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+
+  form.append(
+    'fiscal_document',
+    new Blob([bytes], { type: 'application/pdf' }),
+    safeFilename,
+  )
+
+  const response = await fetch(
+    `${API_URL}/packs/${encodeURIComponent(packId)}/fiscal_documents`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      body: form,
+    },
+  )
+
+  const payload = await response.json().catch(() => ({}))
+
+  if (!response.ok) {
+    throw new Error(
+      payload.message
+      || payload.error
+      || `Mercado Libre rechazó la factura (${response.status})`
+    )
+  }
+
+  const ids = Array.isArray(payload.ids)
+    ? payload.ids.map((id) => String(id))
+    : []
+
+  return {
+    ok: true,
+    uploaded: true,
+    alreadyAttached: false,
+    packId,
+    ids,
+  }
+}
+
 export async function getFiscalDocuments(orderId) {
   if (!orderId) throw new Error('Falta el ID de la venta')
 

@@ -11,6 +11,7 @@ import {
   getOrders,
   getStatus,
   syncOrders,
+  uploadFiscalDocument,
 } from './mercadolibre.js'
 import { generateCsr, getArcaStatus, readCsr, saveCertificate } from './arca/certificates.js'
 import { testArcaConnection } from './arca/wsaa.js'
@@ -260,10 +261,81 @@ app.post('/api/arca/sale-invoice', async (req, res) => {
     invoices.push(invoice)
     await writeSaleInvoices(invoices)
 
-    res.json({ ok: true, invoice })
+    try {
+      const pdf = buildInvoicePdf(invoice)
+      const filename = `${invoice.voucher?.voucherTypeDescription || 'Factura'}-${invoice.voucher?.formattedNumber || orderId}.pdf`
+        .replace(/[^a-zA-Z0-9._-]+/g, '-')
+
+      const delivery = await uploadFiscalDocument(orderId, pdf, filename)
+      invoice.mercadoLibreDelivery = {
+        status: delivery.alreadyAttached ? 'already_attached' : 'sent',
+        sentAt: new Date().toISOString(),
+        packId: delivery.packId || null,
+        documentIds: delivery.ids || [],
+        error: null,
+      }
+    } catch (uploadError) {
+      console.error('Mercado Libre invoice upload error:', uploadError)
+      invoice.mercadoLibreDelivery = {
+        status: 'pending',
+        sentAt: null,
+        packId: detail.packId || null,
+        documentIds: [],
+        error: uploadError.message,
+      }
+    }
+
+    await writeSaleInvoices(invoices)
+
+    res.json({
+      ok: true,
+      invoice,
+      mercadoLibreDelivery: invoice.mercadoLibreDelivery,
+    })
   } catch (error) {
     console.error('ARCA sale invoice error:', error)
     res.status(400).json({ ok: false, error: error.message })
+  }
+})
+
+
+app.post('/api/arca/sale-invoices/:orderId/send-to-mercadolibre', async (req, res) => {
+  try {
+    const orderId = String(req.params.orderId || '').trim()
+    if (!orderId) throw new Error('Falta el ID de la venta.')
+
+    const invoices = await readSaleInvoices()
+    const invoice = invoices.find((item) => String(item.orderId) === orderId)
+    if (!invoice) {
+      return res.status(404).json({
+        ok: false,
+        error: 'No se encontró la factura solicitada.',
+      })
+    }
+
+    const pdf = buildInvoicePdf(invoice)
+    const filename = `${invoice.voucher?.voucherTypeDescription || 'Factura'}-${invoice.voucher?.formattedNumber || orderId}.pdf`
+      .replace(/[^a-zA-Z0-9._-]+/g, '-')
+
+    const delivery = await uploadFiscalDocument(orderId, pdf, filename)
+    invoice.mercadoLibreDelivery = {
+      status: delivery.alreadyAttached ? 'already_attached' : 'sent',
+      sentAt: new Date().toISOString(),
+      packId: delivery.packId || null,
+      documentIds: delivery.ids || [],
+      error: null,
+    }
+
+    await writeSaleInvoices(invoices)
+
+    res.json({
+      ok: true,
+      invoice,
+      mercadoLibreDelivery: invoice.mercadoLibreDelivery,
+    })
+  } catch (error) {
+    console.error('Retry Mercado Libre invoice upload error:', error)
+    res.status(502).json({ ok: false, error: error.message })
   }
 })
 
