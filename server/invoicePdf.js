@@ -1,4 +1,10 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import QRCode from 'qrcode'
+
+const PANADERO_LOGO_WIDTH = 160
+const PANADERO_LOGO_HEIGHT = 27
+const PANADERO_LOGO_HEX = 'FFFF000000000000000000003F00000000000000FFFFC00000000000000000003F00000000000000FFFFE00000000000000000003F00000000000000FFFFF00000000000000000003F00000000000000FFFFF00000000000000000003F00000000000000FC07F80000000000000000003F00000000000000FC03F81FF01F9FC00FFC00FF3F01FF01F8F07FC0FC01F87FFC1FBFE01FFE01FFBF03FFC1FBF0FFF0FC01F8FFFE1FFFF07FFF03FFFF0FFFE1FFF3FFF8FC01F9FFFE1FFFF87FFF87FFFF0FFFF1FFF7FFFCFC03FBFCFF1FFFF8FF3FC7FFFF1FFFF1FFF7FFFEFC07FBF83F1FE3F8FC1FCFE0FF3F83F9FF8FE0FEFFFFF3F03F1FC1FCFC0FCFE07F3F01F9FC0FE07FFFFFF0003F9FC1FC000FCFC07F3F01F9FC0FC07FFFFFE003FF9F81FC00FFCFC07F7FFFFDFC1FC03FFFFFC03FFF9F81FC0FFFDFC03F7FFFFDFC1FC03FFFFF00FFFF9F81FC3FFFDFC03F7FFFFDFC1FC03FFFF801FFFF9F81FC7FFFDFC03F7FFFFDFC1FC03FFC0003FF3F9F81FCFF8FCFC07F7F0001FC1FC03FFC0003F03F9F81FDFC0FCFC07F3F0001FC0FC07FFC0007F03F9F81FDFC0FCFE07F3F01F9FC0FE07FFC0007F07F9F81FDFC1FCFF0FF3F83F9FC0FF0FEFC0007F9FFDF81FDFE7FF7FFFF1FFFF9FC07FFFEFC0003FFFFDF81FCFFFFF7FFFF0FFFF1FC03FFFCFC0003FFFFDF81FCFFFFF3FFFF0FFFE1FC03FFF8FC0001FFCFDF81FC7FF3F1FFBF03FFC1FC00FFF0FC00007F87DF80F81FC1F07E3F00FF00F8003FC0>'
 
 function money(value) {
   return new Intl.NumberFormat('es-AR', {
@@ -81,6 +87,93 @@ function createPdf(objects) {
   return Buffer.from(pdf, 'latin1')
 }
 
+function readMercadoLibreStore() {
+  const candidates = [
+    process.env.ML_DATA_FILE,
+    process.env.MERCADOLIBRE_DATA_FILE,
+    path.join(process.cwd(), 'server', 'data', 'mercadolibre.json'),
+    path.join(process.cwd(), 'data', 'mercadolibre.json'),
+  ].filter(Boolean)
+
+  for (const candidate of candidates) {
+    try {
+      if (!fs.existsSync(candidate)) continue
+      return JSON.parse(fs.readFileSync(candidate, 'utf8'))
+    } catch {
+      // Continue with the next possible location.
+    }
+  }
+
+  return null
+}
+
+function findStoredOrder(invoice = {}, store = null) {
+  const orderId = String(invoice.orderId || invoice.saleSnapshot?.id || '')
+  if (!orderId || !store) return null
+  const orders = Array.isArray(store.orders) ? store.orders : []
+  return orders.find((order) => String(order?.id || order?.orderId || '') === orderId) || null
+}
+
+function sellerName(invoice = {}, store = null) {
+  const snapshot = invoice.saleSnapshot || {}
+  return (
+    invoice.accountNickname ||
+    invoice.account?.nickname ||
+    invoice.sellerNickname ||
+    invoice.seller?.nickname ||
+    invoice.mercadoLibreAccount ||
+    snapshot.account?.nickname ||
+    snapshot.seller?.nickname ||
+    snapshot.sellerNickname ||
+    snapshot.accountNickname ||
+    snapshot.accountName ||
+    store?.account?.nickname ||
+    process.env.ML_ACCOUNT_NAME ||
+    'CUENTA MERCADO LIBRE'
+  )
+}
+
+function normalizeItem(item = {}) {
+  return {
+    title:
+      item.title ||
+      item.name ||
+      item.item?.title ||
+      item.product?.title ||
+      item.productName ||
+      item.description ||
+      'Producto Mercado Libre',
+    quantity: Number(item.quantity || item.qty || 1),
+    unitPrice: Number(item.unitPrice || item.unit_price || item.price || item.totalPrice || 0),
+  }
+}
+
+function invoiceItems(invoice = {}, storedOrder = null) {
+  const snapshot = invoice.saleSnapshot || {}
+  const candidates = [
+    snapshot.items,
+    invoice.items,
+    invoice.orderItems,
+    snapshot.orderItems,
+    storedOrder?.items,
+    storedOrder?.orderItems,
+  ]
+
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate) && candidate.length) return candidate.map(normalizeItem)
+  }
+
+  const single =
+    snapshot.item ||
+    invoice.item ||
+    snapshot.product ||
+    invoice.product ||
+    storedOrder?.item ||
+    storedOrder?.product
+
+  return single ? [normalizeItem(single)] : []
+}
+
 function documentTypeCode(buyer = {}) {
   const explicit = Number(buyer.documentTypeCode || buyer.docTypeCode)
   if (Number.isFinite(explicit) && explicit > 0) return explicit
@@ -106,21 +199,6 @@ function invoiceNumber(voucher = {}) {
   const parts = formatted.split('-')
   const last = Number(onlyDigits(parts.at(-1)))
   return Number.isFinite(last) && last > 0 ? last : 0
-}
-
-function sellerName(invoice = {}) {
-  const snapshot = invoice.saleSnapshot || {}
-  return (
-    invoice.accountNickname ||
-    invoice.sellerNickname ||
-    invoice.mercadoLibreAccount ||
-    snapshot.account?.nickname ||
-    snapshot.seller?.nickname ||
-    snapshot.sellerNickname ||
-    snapshot.accountNickname ||
-    process.env.ML_ACCOUNT_NAME ||
-    'CUENTA MERCADO LIBRE'
-  )
 }
 
 function buildArcaQrUrl(invoice = {}) {
@@ -201,9 +279,11 @@ export function buildInvoicePdf(invoice) {
   const voucher = invoice?.voucher || {}
   const buyer = invoice?.buyer || {}
   const snapshot = invoice?.saleSnapshot || {}
-  const items = Array.isArray(snapshot.items) ? snapshot.items : []
+  const store = readMercadoLibreStore()
+  const storedOrder = findStoredOrder(invoice, store)
+  const items = invoiceItems(invoice, storedOrder)
   const commands = []
-  const accountName = cleanText(sellerName(invoice)).toUpperCase()
+  const accountName = cleanText(sellerName(invoice, store)).toUpperCase()
   const qrUrl = buildArcaQrUrl(invoice)
   let y = 798
 
@@ -256,14 +336,16 @@ export function buildInvoicePdf(invoice) {
     items.slice(0, 10).forEach((item) => {
       const quantity = Number(item.quantity || 1)
       const unitPrice = Number(item.unitPrice || 0)
-      wrapText(`${quantity} x ${item.title || 'Producto'}`, 68).forEach((itemLine, index) => {
+      wrapText(`${quantity} x ${item.title || 'Producto Mercado Libre'}`, 68).forEach((itemLine, index) => {
         text(itemLine, 48, index === 0 ? 9 : 8)
       })
-      text(money(unitPrice * quantity), 430, 9, true)
-      y += 15
+      if (unitPrice > 0) {
+        text(money(unitPrice * quantity), 430, 9, true)
+        y += 15
+      }
     })
   } else {
-    text('Venta de productos por Mercado Libre', 48, 9)
+    text('Producto Mercado Libre', 48, 9)
   }
 
   line()
@@ -276,7 +358,7 @@ export function buildInvoicePdf(invoice) {
 
   const qrSize = 118
   const qrX = 48
-  const qrY = Math.max(42, y - qrSize + 8)
+  const qrY = Math.max(55, y - qrSize + 8)
 
   if (qrUrl) {
     commands.push(...qrCommands(qrUrl, qrX, qrY, qrSize))
@@ -289,16 +371,20 @@ export function buildInvoicePdf(invoice) {
   }
 
   commands.push(`BT /F1 7 Tf 180 ${qrY + 24} Td (Documento electronico autorizado. Conserve el CAE y su vencimiento.) Tj ET`)
-  commands.push(`BT /F1 6 Tf 470 24 Td (Panadero) Tj ET`)
+
+  // Small Panadero signature in the footer using the supplied wordmark.
+  commands.push('q 0 g 92 0 0 21 48 20 cm /Logo Do Q')
+  commands.push('BT /F1 7 Tf 148 27 Td (Gestion inteligente) Tj ET')
 
   const content = commands.join('\n')
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> /XObject << /Logo 7 0 R >> >> /Contents 6 0 R >>',
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>',
     `<< /Length ${Buffer.byteLength(content, 'latin1')} >>\nstream\n${content}\nendstream`,
+    `<< /Type /XObject /Subtype /Image /Width ${PANADERO_LOGO_WIDTH} /Height ${PANADERO_LOGO_HEIGHT} /ImageMask true /BitsPerComponent 1 /Decode [1 0] /Filter /ASCIIHexDecode /Length ${PANADERO_LOGO_HEX.length} >>\nstream\n${PANADERO_LOGO_HEX}\nendstream`,
   ]
 
   return createPdf(objects)
