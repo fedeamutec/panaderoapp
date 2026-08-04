@@ -55,6 +55,28 @@ function invoiceTypeLabel(value) {
   return 'Automático'
 }
 
+function normalizeSaleStatus(sale, invoiceMap = {}) {
+  const orderId = String(sale?.id || '')
+  const hasPanaderoInvoice = Boolean(invoiceMap[orderId])
+  const hasMercadoLibreInvoice = Boolean(
+    sale?.invoiceAttached
+    || sale?.invoiceDocuments?.length
+    || sale?.invoiceSource === 'mercadolibre',
+  )
+
+  if (hasPanaderoInvoice || hasMercadoLibreInvoice) {
+    return {
+      ...sale,
+      status: 'invoiced',
+      statusLabel: 'Facturada',
+      invoiceAttached: hasMercadoLibreInvoice || Boolean(sale?.invoiceAttached),
+      invoiceSource: hasPanaderoInvoice ? 'panadero' : sale?.invoiceSource || 'mercadolibre',
+    }
+  }
+
+  return sale
+}
+
 function Home() {
   const [account, setAccount] = useState({ connected: false, nickname: '' })
   const [sales, setSales] = useState(demoSales)
@@ -107,11 +129,7 @@ function Home() {
         setSaleInvoices(invoiceMap)
         if (orderPayload.orders?.length) {
           setSales(
-            orderPayload.orders.map((sale) =>
-              invoiceMap[String(sale.id)]
-                ? { ...sale, status: 'invoiced', statusLabel: 'Facturada' }
-                : sale,
-            ),
+            orderPayload.orders.map((sale) => normalizeSaleStatus(sale, invoiceMap)),
           )
           setSelectedSaleId(orderPayload.orders[0]?.id || '')
         }
@@ -196,7 +214,7 @@ function Home() {
   }, [activeFilter, query, sales])
 
   const selectedSale =
-    sales.find((sale) => sale.id === selectedSaleId) || visibleSales[0]
+    sales.find((sale) => String(sale.id) === String(selectedSaleId)) || visibleSales[0]
 
   const summary = useMemo(
     () => ({
@@ -261,7 +279,9 @@ function Home() {
     setNotice('')
     try {
       const result = await api(`/mercadolibre/sync?page=${targetPage}&pageSize=${pageSize}`, { method: 'POST' })
-      setSales(result.orders || [])
+      setSales(
+        (result.orders || []).map((sale) => normalizeSaleStatus(sale, saleInvoices)),
+      )
       setPage(Number(result.page || targetPage))
       setTotalSales(Number(result.total || 0))
       setTotalPages(Number(result.totalPages || 1))
@@ -412,6 +432,12 @@ function Home() {
   const address = orderDetail?.address
   const primaryPayment = orderDetail?.payments?.[0]
   const selectedInvoice = selectedSale ? saleInvoices[String(selectedSale.id)] : null
+  const selectedSaleAlreadyInvoiced = Boolean(
+    selectedSale?.status === 'invoiced'
+    || selectedSale?.invoiceAttached
+    || selectedSale?.invoiceDocuments?.length
+    || selectedInvoice,
+  )
   const selectedInvoiceType = selectedSale
     ? invoiceTypes[selectedSale.id] || 'automatic'
     : 'automatic'
@@ -481,7 +507,24 @@ function Home() {
           />
 
           <div className="pagination-bar">
-            <button type="button" className="ghost-button" onClick={() => handlePageChange(page - 1)} disabled={page <= 1 || loading}>← Anterior</button>
+            <div className="pagination-left">
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => handlePageChange(1)}
+                disabled={page <= 1 || loading}
+              >
+                ⇤ Primera
+              </button>
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => handlePageChange(page - 1)}
+                disabled={page <= 1 || loading}
+              >
+                ← Anterior
+              </button>
+            </div>
             <span>Página <strong>{page}</strong> de <strong>{totalPages}</strong></span>
             <button type="button" className="ghost-button" onClick={() => handlePageChange(page + 1)} disabled={page >= totalPages || loading}>Siguiente →</button>
           </div>
@@ -637,7 +680,7 @@ function Home() {
                               [selectedSale.id]: value,
                             }))
                           }
-                          disabled={Boolean(selectedInvoice)}
+                          disabled={selectedSaleAlreadyInvoiced}
                         >
                           <span>{label}</span>
                           {value === 'automatic' && (
@@ -662,7 +705,7 @@ function Home() {
                               [selectedSale.id]: rate,
                             }))
                           }
-                          disabled={Boolean(selectedInvoice)}
+                          disabled={selectedSaleAlreadyInvoiced}
                         >
                           IVA {String(rate).replace('.', ',')}%
                         </button>
@@ -698,6 +741,17 @@ function Home() {
                       <a className="ghost-button" href={`${selectedInvoicePdfUrl}?download=1`}>Descargar PDF</a>
                     </div>
                   </>
+                ) : selectedSale?.invoiceAttached ? (
+                  <div className="activity-item invoiced-activity">
+                    <span className="activity-dot" />
+                    <div>
+                      <strong>Factura adjunta en Mercado Libre</strong>
+                      <small>
+                        {selectedSale.invoiceDocuments?.[0]?.filename
+                          || 'Comprobante detectado durante la sincronización'}
+                      </small>
+                    </div>
+                  </div>
                 ) : (
                   <div className="activity-item muted"><span className="activity-dot" /><div><strong>Esperando facturación</strong><small>Panadero está listo para continuar</small></div></div>
                 )}
@@ -711,10 +765,12 @@ function Home() {
                   className="primary-button wide"
                   type="button"
                   onClick={handleInvoiceSale}
-                  disabled={invoiceLoading || invoicePreparing || detailLoading || !orderDetail || Boolean(selectedInvoice)}
+                  disabled={invoiceLoading || invoicePreparing || detailLoading || !orderDetail || selectedSaleAlreadyInvoiced}
                 >
                   {selectedInvoice
                     ? `Facturada · ${selectedInvoice.voucher?.formattedNumber || ''}`
+                    : selectedSale?.invoiceAttached
+                      ? 'Facturada en Mercado Libre'
                     : invoicePreparing
                       ? 'Consultando numeración…'
                       : invoiceLoading
