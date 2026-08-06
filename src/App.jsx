@@ -5,6 +5,8 @@ import Home from './Pages/Home'
 import Invoices from './Pages/Invoices'
 import ArcaSettings from './Pages/ArcaSettings'
 import Login from './Pages/Login'
+import Budgets from './Pages/Budgets'
+import Reports from './Pages/Reports'
 
 const THEMES = ['cursor', 'black', 'paper']
 
@@ -29,7 +31,8 @@ function App() {
     return Number.isFinite(saved) && saved >= 0.9 && saved <= 1.35 ? saved : 1.08
   })
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [activeSection, setActiveSection] = useState(() => localStorage.getItem('panadero-section') || 'ventas')
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('panadero-sidebar-collapsed') === '1')
+  const [activeSection, setActiveSection] = useState(() => localStorage.getItem('panadero-section') || 'inicio')
 
   useEffect(() => {
     let cancelled = false
@@ -47,10 +50,15 @@ function App() {
   useEffect(() => localStorage.setItem('panadero-theme', theme), [theme])
   useEffect(() => localStorage.setItem('panadero-font-scale', String(fontScale)), [fontScale])
   useEffect(() => localStorage.setItem('panadero-section', activeSection), [activeSection])
+  useEffect(() => localStorage.setItem('panadero-sidebar-collapsed', sidebarCollapsed ? '1' : '0'), [sidebarCollapsed])
 
   if (window.location.pathname === '/oauth/callback') return <OAuthBridge />
   if (authState.loading) return <main className="auth-loading"><strong>Panadero</strong><small>Verificando sesión…</small></main>
-  if (!authState.user) return <Login onLogin={(user) => setAuthState({ loading: false, user })} />
+
+  const previewMode = import.meta.env.DEV && new URLSearchParams(window.location.search).get('preview') === '1'
+  if (!authState.user && !previewMode) return <Login onLogin={(user) => setAuthState({ loading: false, user })} />
+
+  const effectiveUser = authState.user || { name: 'Fede Amurin', role: 'Administrador', email: 'preview@local' }
 
   const logout = async () => {
     try {
@@ -61,7 +69,7 @@ function App() {
   }
 
   return (
-    <div className="app-shell" data-theme={theme} style={{ '--font-scale': fontScale }}>
+    <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`} data-theme={theme} style={{ '--font-scale': fontScale }}>
       <Sidebar
         activeSection={activeSection}
         onSectionChange={setActiveSection}
@@ -72,10 +80,22 @@ function App() {
         onThemeChange={setTheme}
         fontScale={fontScale}
         onFontScaleChange={setFontScale}
-        user={authState.user}
+        user={effectiveUser}
         onLogout={logout}
+        collapsed={sidebarCollapsed}
+        onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
       />
-      {activeSection === 'facturas' ? <Invoices /> : activeSection === 'arca' ? <ArcaSettings /> : <Home />}
+      {activeSection === 'presupuestos' ? (
+        <Budgets />
+      ) : activeSection === 'facturas' ? (
+        <Invoices onNavigateToSales={() => setActiveSection('ventas')} />
+      ) : activeSection === 'arca' ? (
+        <ArcaSettings />
+      ) : activeSection === 'reportes' ? (
+        <Reports />
+      ) : (
+        <Home />
+      )}
     </div>
   )
 }

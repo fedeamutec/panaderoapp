@@ -1,0 +1,275 @@
+[
+  {
+    "id": "CR5",
+    "code": "CR5",
+    "name": "5 A / cargador 12V",
+    "price": 93446.0200155261,
+    "category": "CARGADORES"
+  },
+  {
+    "id": "CR10",
+    "code": "CR10",
+    "name": "10 A / cargador 12V",
+    "price": 101900.86812431179,
+    "category": "CARGADORES"
+  },
+  {
+    "id": "CR15",
+    "code": "CR15",
+    "name": "15 A / cargador 12V",
+    "price": 126850.04822554448,
+    "category": "CARGADORES"
+  },
+  {
+    "id": "CR20",
+    "code": "CR20",
+    "name": "20 A / cargador 12V",
+    "price": 133823.79495263597,
+    "category": "CARGADORES"
+  },
+  {
+    "id": "CR30",
+    "code": "CR30",
+    "name": "30 A / cargador 12V",
+    "price": 166227.6698311048,
+    "category": "CARGADORES"
+  },
+  {
+    "id": "CR20A",
+    "code": "CR20A",
+    "name": "20 A / Cargador automatico 12V",
+    "price": 160183.02729179157,
+    "category": "CARGADORES"
+  },
+  {
+    "id": "CR30.350",
+    "code": "CR30.350",
+    "name": "30/350 / Arrancador 12V",
+    "price": 229051.50888119638,
+    "category": "CARGADORES ARRANCADORES"
+  },
+  {
+    "id": "CR40.400",
+    "code": "CR40.400",
+    "name": "40/400 / Arrancador 12V",
+    "price": 249191.2084809861,
+    "category": "CARGADORES ARRANCADORES"
+  },
+  {
+    "id": "CR40.410",
+    "code": "CR40.410",
+    "name": "40/410 / Arrancador 12V",
+    "price": 290973.5703372678,
+    "category": "CARGADORES ARRANCADORES"
+  },
+  {
+    "id": "CR30.600",
+    "code": "CR30.600",
+    "name": "30/600 / Arrancador 12V-24V",
+    "price": 437362.13309992227,
+    "category": "CARGADORES ARRANCADORES"
+  },
+  {
+    "id": "CR100.400",
+    "code": "CR100.400",
+    "name": "100/400 / Arrancador 12V",
+    "price": 500486.5646813543,
+    "category": "CARGADORES ARRANCADORES"
+  },
+  {
+    "id": "CR100.500",
+    "code": "CR100.500",
+    "name": "100/500 / Arrancador 12V - 24V",
+    "price": 643568.6095992668,
+    "category": "CARGADORES ARRANCADORES"
+  },
+  {
+    "id": "CR5E",
+    "code": "CR5E",
+    "name": "Elevador de tensión manual 5 kw",
+    "price": 392997.28043912817,
+    "category": "ELEVADORES MANUALES"
+  },
+  {
+    "id": "CR6E",
+    "code": "CR6E",
+    "name": "Elevador de tensión manual 6 kw",
+    "price": 418776.218513449,
+    "category": "ELEVADORES MANUALES"
+  },
+  {
+    "id": "CR7E",
+    "code": "CR7E",
+    "name": "Elevador de tensión manual 7 kw",
+    "price": 505319.796334381,
+    "category": "ELEVADORES MANUALES"
+  },
+  {
+    "id": "CR10E",
+    "code": "CR10E",
+    "name": "Elevador de tensión manual 10 kw",
+    "price": 613170.4556249048,
+    "category": "ELEVADORES MANUALES"
+  },
+  {
+    "id": "CR15E",
+    "code": "CR15E",
+    "name": "Elevador de tension manual 15 kw",
+    "price": 713918.7544255648,
+    "category": "ELEVADORES MANUALES"
+  },
+  {
+    "id": "CR6ES",
+    "code": "CR6ES",
+    "name": "Estabilizador de tensión 6 KW",
+    "price": 455866.323293848,
+    "category": "ESTABILIZADORES AUTOMATICOS"
+  },
+  {
+    "id": "CR8ES",
+    "code": "CR8ES",
+    "name": "Estabilizador de tensión 8 KW",
+    "price": 541620.7499492401,
+    "category": "ESTABILIZADORES AUTOMATICOS"
+  },
+  {
+    "id": "CR10ES",
+    "code": "CR10ES",
+    "name": "Estabilizador de tensión 10 KW",
+    "price": 563190.881807345,
+    "category": "ESTABILIZADORES AUTOMATICOS"
+  },
+  {
+    "id": "CR12ES",
+    "code": "CR12ES",
+    "name": "Estabilizador de tension 12 kw",
+    "price": 655521.568175574,
+    "category": "ESTABILIZADORES AUTOMATICOS"
+  },
+  {
+    "id": "CR15ES",
+    "code": "CR15ES",
+    "name": "Estabilizador de tension 15 kw",
+    "price": 691033.3706248929,
+    "category": "ESTABILIZADORES AUTOMATICOS"
+  },
+  {
+    "id": "CR20ES",
+    "code": "CR20ES",
+    "name": "Estabilizador de tension 20 kw",
+    "price": 940142.0885471513,
+    "category": "ESTABILIZADORES AUTOMATICOS"
+  },
+  {
+    "id": "CR22ES",
+    "code": "CR22ES",
+    "name": "Estabilizador de tension 22 kw",
+    "price": 1001169.7786822771,
+    "category": "ESTABILIZADORES AUTOMATICOS"
+  },
+  {
+    "id": "CRMIG200M",
+    "code": "CRMIG200M",
+    "name": "Soldadora Mig 200 amp. - Monofásica",
+    "price": 2101031.247,
+    "category": "SOLDADORAS MIG"
+  },
+  {
+    "id": "CRMIG250M",
+    "code": "CRMIG250M",
+    "name": "Soldadora Mig 250 amp. - Monofásica",
+    "price": 2581177.221,
+    "category": "SOLDADORAS MIG"
+  },
+  {
+    "id": "CRMIG250T",
+    "code": "CRMIG250T",
+    "name": "Soldadora Mig 250 amp. - Trifásica",
+    "price": 2894133.9,
+    "category": "SOLDADORAS MIG"
+  },
+  {
+    "id": "CRMIG300T",
+    "code": "CRMIG300T",
+    "name": "Soldadora Mig  300 amp  - Trifasica",
+    "price": 3477430.488,
+    "category": "SOLDADORAS MIG"
+  },
+  {
+    "id": "SB4.3",
+    "code": "SB4.3",
+    "name": "Sacabollos 4.3",
+    "price": 1053433.1370231067,
+    "category": "SACABOLLOS"
+  },
+  {
+    "id": "SB4300",
+    "code": "SB4300",
+    "name": "Sacabollos 4300",
+    "price": 1287716.976,
+    "category": "SACABOLLOS"
+  },
+  {
+    "id": "100W",
+    "code": "100W",
+    "name": "AutoTRANSFORMADOR convertirdor 110v a 220v",
+    "price": 37000.0,
+    "category": "AutoTRANSFORMADORES"
+  },
+  {
+    "id": "150W",
+    "code": "150W",
+    "name": "AutoTRANSFORMADOR convertirdor 110v a 220v",
+    "price": 44580.0,
+    "category": "AutoTRANSFORMADORES"
+  },
+  {
+    "id": "200W",
+    "code": "200W",
+    "name": "AutoTRANSFORMADOR convertirdor 110v a 220v",
+    "price": 45000.0,
+    "category": "AutoTRANSFORMADORES"
+  },
+  {
+    "id": "300W",
+    "code": "300W",
+    "name": "Auto TRANSFORMADOR convertirdor 110v a 220v",
+    "price": 58500.0,
+    "category": "AutoTRANSFORMADORES"
+  },
+  {
+    "id": "500W",
+    "code": "500W",
+    "name": "Auto TRANSFORMADOR convertirdor 110v a 220v",
+    "price": 68200.0,
+    "category": "AutoTRANSFORMADORES"
+  },
+  {
+    "id": "750W",
+    "code": "750W",
+    "name": "Auto TRANSFORMADOR convertirdor 110v a 220v",
+    "price": 86270.0,
+    "category": "AutoTRANSFORMADORES"
+  },
+  {
+    "id": "1000W",
+    "code": "1000W",
+    "name": "Auto TRANSFORMADOR convertirdor 110v a 220v",
+    "price": 116800.0,
+    "category": "AutoTRANSFORMADORES"
+  },
+  {
+    "id": "1500W",
+    "code": "1500W",
+    "name": "Auto TRANSFORMADOR convertirdor 110v a 220v",
+    "price": 133500.0,
+    "category": "AutoTRANSFORMADORES"
+  },
+  {
+    "id": "2000W",
+    "code": "2000W",
+    "name": "Auto TRANSFORMADOR convertirdor 110v a 220v",
+    "price": 210500.0,
+    "category": "AutoTRANSFORMADORES"
+  }
+]
