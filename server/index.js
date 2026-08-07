@@ -24,7 +24,6 @@ import {
   getVoucherTypes,
 } from './arca/wsfe.js'
 import { ARCA_DATA_DIR, ARCA_POINT_OF_SALE } from './arca/config.js'
-import { getTaxpayerByCuit } from './arca/padron.js'
 import { buildInvoicePdf } from './invoicePdf.js'
 import { authenticate, clearSessionCookie, createSessionCookie, getSession, requireAuth } from './auth.js'
 
@@ -226,16 +225,6 @@ app.get('/api/arca/sale-invoices', async (_req, res) => {
   }
 })
 
-app.get('/api/arca/taxpayer/:cuit', async (req, res) => {
-  try {
-    const taxpayer = await getTaxpayerByCuit(req.params.cuit)
-    res.json({ ok: true, taxpayer })
-  } catch (error) {
-    console.error('ARCA taxpayer lookup error:', error)
-    res.status(400).json({ ok: false, error: error.message })
-  }
-})
-
 app.post('/api/arca/sale-invoice', async (req, res) => {
   try {
     const orderId = String(req.body?.orderId || '').trim()
@@ -266,60 +255,26 @@ app.post('/api/arca/sale-invoice', async (req, res) => {
     }
 
     const buyer = detail.buyer || {}
-    const requestedType = req.body?.invoiceType || 'automatic'
-    const buyerDocumentType = String(buyer.documentType || '').trim().toUpperCase()
-    const buyerDocumentNumber = String(buyer.documentNumber || '').replace(/\D/g, '')
-    const expectsInvoiceA = String(requestedType).trim().toUpperCase() === 'A'
-      || (String(requestedType).trim().toUpperCase() === 'AUTOMATIC'
-        && buyerDocumentType === 'CUIT'
-        && buyerDocumentNumber.length === 11)
-
-    let arcaTaxpayer = null
-    if (expectsInvoiceA) {
-      try {
-        arcaTaxpayer = await getTaxpayerByCuit(buyerDocumentNumber)
-      } catch (lookupError) {
-        throw new Error(
-          `No se emitió la Factura A porque Panadero no pudo validar los datos fiscales del receptor en ARCA Padrón: ${lookupError.message}`,
-        )
-      }
-    }
-
     const result = await createSaleInvoice({
       pointOfSale: ARCA_POINT_OF_SALE,
       amount,
-      requestedType,
+      requestedType: req.body?.invoiceType || 'automatic',
       vatRate: req.body?.vatRate,
       documentType: buyer.documentType,
       documentNumber: buyer.documentNumber,
       confirmation,
     })
 
-    const fiscalBuyer = arcaTaxpayer
-      ? {
-          name: arcaTaxpayer.name,
-          documentType: 'CUIT',
-          documentNumber: arcaTaxpayer.cuit,
-          address: arcaTaxpayer.address,
-          source: arcaTaxpayer.source,
-          checkedAt: arcaTaxpayer.checkedAt,
-        }
-      : {
-          name: buyer.name || null,
-          documentType: buyer.documentType || null,
-          documentNumber: buyer.documentNumber || null,
-          address: null,
-          source: 'mercadolibre',
-          checkedAt: null,
-        }
-
     const invoice = {
       orderId,
-      buyer: fiscalBuyer,
+      buyer: {
+        name: buyer.name || null,
+        documentType: buyer.documentType || null,
+        documentNumber: buyer.documentNumber || null,
+      },
       saleSnapshot: {
         items: Array.isArray(detail.items) ? detail.items : [],
-        address: arcaTaxpayer?.address || detail.address || null,
-        shippingAddress: detail.address || null,
+        address: detail.address || null,
         amounts: detail.amounts || { total: amount },
         accountNickname: detail.accountNickname || null,
       },
@@ -481,44 +436,7 @@ app.get('/api/mercadolibre/orders', async (_req, res) => {
 })
 
 app.get('/api/mercadolibre/order/:id', async (req, res) => {
-  try {
-    const payload = await getOrderDetail(req.params.id)
-    const detail = payload?.detail || null
-    const documentType = String(detail?.buyer?.documentType || '').trim().toUpperCase()
-    const documentNumber = String(detail?.buyer?.documentNumber || '').replace(/\D/g, '')
-
-    // Mercado Libre sigue siendo la fuente del CUIT/DNI y de ENTREGA.
-    // Si hay CUIT válido, ARCA completa únicamente los datos fiscales del receptor.
-    if (detail && documentType === 'CUIT' && documentNumber.length === 11) {
-      try {
-        const taxpayer = await getTaxpayerByCuit(documentNumber)
-        detail.fiscalBuyer = {
-          name: taxpayer.name,
-          documentType: 'CUIT',
-          documentNumber: taxpayer.cuit,
-          vatCondition: taxpayer.vatCondition || 'CUIT registrado en ARCA',
-          address: taxpayer.address || null,
-          source: taxpayer.source,
-          checkedAt: taxpayer.checkedAt,
-        }
-      } catch (arcaError) {
-        detail.fiscalBuyer = {
-          name: null,
-          documentType: 'CUIT',
-          documentNumber,
-          vatCondition: 'Pendiente de consultar',
-          address: null,
-          source: 'arca_error',
-          error: arcaError.message,
-        }
-      }
-    }
-
-    res.json(payload)
-  } catch (error) {
-    const status = Number(error?.status) === 429 ? 429 : 500
-    res.status(status).json({ error: error.message })
-  }
+  try { res.json(await getOrderDetail(req.params.id)) } catch (error) { res.status(500).json({ error: error.message }) }
 })
 
 app.post('/api/mercadolibre/disconnect', async (_req, res) => {

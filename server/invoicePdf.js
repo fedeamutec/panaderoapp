@@ -322,14 +322,8 @@ export function buildInvoicePdf(invoice) {
   row('Documento', [buyer.documentType, buyer.documentNumber].filter(Boolean).join(' ') || 'Sin identificar')
   row('Condicion IVA', voucher.voucherType === 1 ? 'Responsable Inscripto' : 'Consumidor Final')
 
-  const fiscalAddress = buyer.address || snapshot.address
-  if (fiscalAddress) {
-    const address = [
-      fiscalAddress.addressLine,
-      fiscalAddress.city,
-      fiscalAddress.state,
-      fiscalAddress.zipCode ? `CP ${fiscalAddress.zipCode}` : null,
-    ]
+  if (snapshot.address) {
+    const address = [snapshot.address.addressLine, snapshot.address.city, snapshot.address.state]
       .filter(Boolean)
       .join(', ')
     row('Domicilio', address || '—')

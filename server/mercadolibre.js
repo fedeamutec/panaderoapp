@@ -142,42 +142,24 @@ async function getAccessToken() {
   return refreshAccessToken(store.tokens.refreshToken)
 }
 
-function wait(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-async function apiFetch(pathname, suppliedToken, { retries = 3 } = {}) {
+async function apiFetch(pathname, suppliedToken) {
   const token = suppliedToken || await getAccessToken()
 
-  for (let attempt = 0; attempt <= retries; attempt += 1) {
-    const response = await fetch(`${API_URL}${pathname}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
+  const response = await fetch(`${API_URL}${pathname}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
 
-    const payload = await response.json().catch(() => ({}))
+  const payload = await response.json().catch(() => ({}))
 
-    if (response.ok) return payload
-
-    // 429 = límite temporal de Mercado Libre. Reintentamos sin desconectar la cuenta.
-    if (response.status === 429 && attempt < retries) {
-      const retryAfter = Number(response.headers.get('retry-after') || 0)
-      const delay = retryAfter > 0
-        ? retryAfter * 1000
-        : Math.min(8000, 1200 * (2 ** attempt))
-      await wait(delay)
-      continue
-    }
-
-    const error = new Error(
+  if (!response.ok) {
+    throw new Error(
       payload.message
       || payload.error
       || `Error de Mercado Libre (${response.status})`
     )
-    error.status = response.status
-    throw error
   }
 
-  throw new Error('Mercado Libre no respondió después de varios reintentos.')
+  return payload
 }
 
 function fiscalDocumentReference(order = {}) {

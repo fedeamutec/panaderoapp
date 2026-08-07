@@ -15,13 +15,10 @@ import {
 } from './config.js'
 
 const execFileAsync = promisify(execFile)
-const cachedTickets = new Map()
-const inFlightTickets = new Map()
+const ticketCachePath = path.join(path.dirname(certPath), `wsaa-ticket-${ARCA_ENV}-${ARCA_SERVICE}.json`)
 
-function ticketCachePath(service) {
-  const safeService = String(service || ARCA_SERVICE).replace(/[^a-zA-Z0-9._-]+/g, '-')
-  return path.join(path.dirname(certPath), `wsaa-ticket-${ARCA_ENV}-${safeService}.json`)
-}
+let cachedTicket = null
+let inFlightTicket = null
 
 function xmlEscape(value) {
   return String(value)
@@ -50,13 +47,13 @@ function extractSoapFault(xml) {
   return extractTag(xml, 'faultstring') || extractTag(xml, 'faultcode') || null
 }
 
-function buildLoginTicketRequest(service) {
+function buildLoginTicketRequest() {
   const now = Date.now()
   const generationTime = new Date(now - 10 * 60 * 1000).toISOString()
   const expirationTime = new Date(now + 12 * 60 * 60 * 1000).toISOString()
   const uniqueId = Math.floor(now / 1000)
 
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<loginTicketRequest version="1.0">\n  <header>\n    <uniqueId>${uniqueId}</uniqueId>\n    <generationTime>${generationTime}</generationTime>\n    <expirationTime>${expirationTime}</expirationTime>\n  </header>\n  <service>${xmlEscape(service)}</service>\n</loginTicketRequest>`
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<loginTicketRequest version="1.0">\n  <header>\n    <uniqueId>${uniqueId}</uniqueId>\n    <generationTime>${generationTime}</generationTime>\n    <expirationTime>${expirationTime}</expirationTime>\n  </header>\n  <service>${xmlEscape(ARCA_SERVICE)}</service>\n</loginTicketRequest>`
 }
 
 async function assertCredentials() {
@@ -98,7 +95,7 @@ function buildSoapEnvelope(cmsBase64) {
   return `<?xml version="1.0" encoding="UTF-8"?>\n<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:wsaa="http://wsaa.view.sua.dvadac.desein.afip.gov">\n  <soapenv:Header/>\n  <soapenv:Body>\n    <wsaa:loginCms>\n      <wsaa:in0>${cmsBase64}</wsaa:in0>\n    </wsaa:loginCms>\n  </soapenv:Body>\n</soapenv:Envelope>`
 }
 
-async function requestTicketFromWsaa(cmsBase64, service) {
+async function requestTicketFromWsaa(cmsBase64) {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), WSAA_REQUEST_TIMEOUT_MS)
 
@@ -118,9 +115,9 @@ async function requestTicketFromWsaa(cmsBase64, service) {
     if (fault) {
       const duplicateTicket = /ya posee un TA valido/i.test(fault)
       if (duplicateTicket) {
-        throw new Error(`ARCA informa que ya existe un ticket válido para ${service}, pero Panadero no tiene una copia local. Esperá a que venza el ticket anterior y probá nuevamente.`)
+        throw new Error('ARCA informa que ya existe un ticket válido, pero Panadero no tiene una copia local. Esperá a que venza el ticket anterior y probá nuevamente. Desde esta versión los próximos tickets quedarán guardados y se reutilizarán automáticamente.')
       }
-      throw new Error(`ARCA rechazó la autenticación para ${service}: ${fault}`)
+      throw new Error(`ARCA rechazó la autenticación: ${fault}`)
     }
     if (!response.ok) throw new Error(`ARCA respondió con HTTP ${response.status}.`)
 
@@ -141,7 +138,7 @@ async function requestTicketFromWsaa(cmsBase64, service) {
       sign,
       generationTime,
       expirationTime,
-      service,
+      service: ARCA_SERVICE,
       environment: ARCA_ENV,
       cuit: ARCA_CUIT,
     }
@@ -153,9 +150,9 @@ async function requestTicketFromWsaa(cmsBase64, service) {
   }
 }
 
-function ticketIsUsable(ticket, service) {
+function ticketIsUsable(ticket) {
   if (!ticket?.token || !ticket?.sign || !ticket?.expirationTime) return false
-  if (String(ticket.service) !== String(service)) return false
+  if (String(ticket.service) !== String(ARCA_SERVICE)) return false
   if (String(ticket.environment) !== String(ARCA_ENV)) return false
   if (String(ticket.cuit) !== String(ARCA_CUIT)) return false
 
@@ -163,73 +160,60 @@ function ticketIsUsable(ticket, service) {
   return Number.isFinite(expiration) && expiration - Date.now() > WSAA_TOKEN_SAFETY_SECONDS * 1000
 }
 
-async function readPersistedTicket(service) {
+async function readPersistedTicket() {
   try {
-    const ticket = JSON.parse(await fs.readFile(ticketCachePath(service), 'utf8'))
-    return ticketIsUsable(ticket, service) ? ticket : null
+    const ticket = JSON.parse(await fs.readFile(ticketCachePath, 'utf8'))
+    return ticketIsUsable(ticket) ? ticket : null
   } catch {
     return null
   }
 }
 
 async function persistTicket(ticket) {
-  const targetPath = ticketCachePath(ticket.service)
-  await fs.mkdir(path.dirname(targetPath), { recursive: true })
-  const temporaryPath = `${targetPath}.tmp`
+  await fs.mkdir(path.dirname(ticketCachePath), { recursive: true })
+  const temporaryPath = `${ticketCachePath}.tmp`
   await fs.writeFile(temporaryPath, JSON.stringify(ticket, null, 2), { mode: 0o600 })
-  await fs.rename(temporaryPath, targetPath)
+  await fs.rename(temporaryPath, ticketCachePath)
 }
 
-async function removePersistedTicket(service) {
-  await fs.rm(ticketCachePath(service), { force: true })
+async function removePersistedTicket() {
+  await fs.rm(ticketCachePath, { force: true })
 }
 
-async function createTicket(service) {
+async function createTicket() {
   await assertCredentials()
-  const traXml = buildLoginTicketRequest(service)
+  const traXml = buildLoginTicketRequest()
   const cmsBase64 = await signLoginTicketRequest(traXml)
-  const ticket = await requestTicketFromWsaa(cmsBase64, service)
-  cachedTickets.set(service, ticket)
+  const ticket = await requestTicketFromWsaa(cmsBase64)
+  cachedTicket = ticket
   await persistTicket(ticket)
   return ticket
 }
 
-export async function getWsaaTicket({ forceRefresh = false, service = ARCA_SERVICE } = {}) {
-  const normalizedService = String(service || ARCA_SERVICE).trim()
-  const cachedTicket = cachedTickets.get(normalizedService)
-  if (!forceRefresh && ticketIsUsable(cachedTicket, normalizedService)) return cachedTicket
+export async function getWsaaTicket({ forceRefresh = false } = {}) {
+  if (!forceRefresh && ticketIsUsable(cachedTicket)) return cachedTicket
 
   if (!forceRefresh) {
-    const persistedTicket = await readPersistedTicket(normalizedService)
+    const persistedTicket = await readPersistedTicket()
     if (persistedTicket) {
-      cachedTickets.set(normalizedService, persistedTicket)
+      cachedTicket = persistedTicket
       return persistedTicket
     }
   }
 
-  const existingRequest = inFlightTickets.get(normalizedService)
-  if (existingRequest) return existingRequest
+  if (inFlightTicket) return inFlightTicket
 
-  const request = createTicket(normalizedService)
-  inFlightTickets.set(normalizedService, request)
+  inFlightTicket = createTicket()
   try {
-    return await request
+    return await inFlightTicket
   } finally {
-    inFlightTickets.delete(normalizedService)
+    inFlightTicket = null
   }
 }
 
-export async function clearWsaaTicket({ service } = {}) {
-  if (service) {
-    const normalizedService = String(service).trim()
-    cachedTickets.delete(normalizedService)
-    await removePersistedTicket(normalizedService)
-    return
-  }
-
-  const services = new Set([ARCA_SERVICE, ...cachedTickets.keys()])
-  cachedTickets.clear()
-  await Promise.all([...services].map((item) => removePersistedTicket(item)))
+export async function clearWsaaTicket() {
+  cachedTicket = null
+  await removePersistedTicket()
 }
 
 export async function testArcaConnection() {
