@@ -424,8 +424,7 @@ app.get('/api/mercadolibre/callback', async (req, res) => {
 
 app.post('/api/mercadolibre/sync', async (_req, res) => {
   try {
-    const status = await syncOrders()
-    res.status(status.running ? 202 : 200).json(status)
+    res.json(await syncOrders({ page: 1, pageSize: 50 }))
   } catch (error) {
     res.status(500).json({ error: error.message })
   }

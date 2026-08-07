@@ -6,6 +6,29 @@ function formatCurrency(value) {
   }).format(value)
 }
 
+
+function fiscalDocumentLabel(type, number) {
+  const normalizedType = String(type || '').toUpperCase()
+  const normalizedNumber = String(number || '').replace(/\s+/g, '')
+  if (!normalizedNumber || normalizedNumber === 'SIN DATOS' || normalizedNumber === 'PENDIENTE') return '—'
+
+  if (normalizedType.includes('CUIT') || normalizedType.includes('CUIL')) {
+    const digits = normalizedNumber.replace(/\D/g, '')
+    const formatted = digits.length === 11
+      ? `${digits.slice(0, 2)}-${digits.slice(2, 10)}-${digits.slice(10)}`
+      : normalizedNumber
+    return `CUIT ${formatted}`
+  }
+
+  if (normalizedType.includes('DNI')) {
+    const digits = normalizedNumber.replace(/\D/g, '')
+    const formatted = digits ? Number(digits).toLocaleString('es-AR') : normalizedNumber
+    return `DNI ${formatted}`
+  }
+
+  return '—'
+}
+
 function SalesTable({ sales, selectedSaleId, onSelectSale }) {
   return (
     <div className="sales-list" role="list">
@@ -24,7 +47,7 @@ function SalesTable({ sales, selectedSaleId, onSelectSale }) {
               <small>#{sale.id}</small>
             </span>
             <span className="sale-meta">
-              {sale.documentType} · {sale.documentNumber}
+              {fiscalDocumentLabel(sale.documentType, sale.documentNumber)}
             </span>
           </span>
 

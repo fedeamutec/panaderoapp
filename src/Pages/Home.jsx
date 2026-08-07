@@ -312,27 +312,14 @@ function Home() {
     }
   }, [activeFilter, pageSize, query, saleInvoices, selectedSaleId])
 
-  const waitForSync = useCallback(async () => {
-    for (;;) {
-      const status = await api('/mercadolibre/sync-status')
-      if (status.message) setNotice(status.message)
-      if (!status.running) {
-        if (status.error) throw new Error(status.error)
-        await loadPage(1)
-        setNotice(status.message || 'Sincronización completa.')
-        return
-      }
-      await new Promise((resolve) => setTimeout(resolve, 1500))
-    }
-  }, [loadPage])
-
   const handleSync = async () => {
     if (syncing) return
     setSyncing(true)
-    setNotice('Iniciando sincronización completa de Mercado Libre…')
+    setNotice('Sincronizando las 50 ventas más recientes…')
     try {
-      await api('/mercadolibre/sync', { method: 'POST' })
-      await waitForSync()
+      const result = await api('/mercadolibre/sync', { method: 'POST' })
+      await loadPage(1)
+      setNotice(result.message || 'Sincronización terminada.')
     } catch (error) {
       setNotice(error.message)
     } finally {
