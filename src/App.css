@@ -1775,3 +1775,94 @@ body,
 .budget-manual-product-panel>footer{display:flex;justify-content:flex-end;gap:8px;padding:14px 20px;border-top:1px solid var(--line)}
 .budget-price-row.manual{background:color-mix(in srgb,var(--accent) 4%,transparent)}.manual-tag{display:inline-block!important;margin-left:7px;padding:2px 5px;color:var(--muted);border:1px solid var(--line);border-radius:4px;font-size:7px!important;text-transform:uppercase}
 @media(max-width:1050px){.budget-fx-strip{flex-wrap:wrap}.budget-fx-note{width:100%;max-width:none;margin-left:0;text-align:left}.budget-item-card:has(.internal-price){grid-template-columns:repeat(3,minmax(90px,1fr))}.budget-item-name{grid-column:1/-1}}
+
+/* ===== Presupuesto V8: clientes plegables + catálogo editable ===== */
+.budget-columns.clients-collapsed {
+  grid-template-columns: 44px minmax(560px, 1.2fr) minmax(520px, 1fr);
+}
+.budget-clients-column.collapsed { overflow:hidden; }
+.budget-clients-column.collapsed .budget-column-heading {
+  min-height:58px;
+  justify-content:center;
+  padding:8px 4px;
+}
+.budget-clients-column.collapsed .budget-clients-title { display:none; }
+.budget-clients-column.collapsed .budget-heading-actions { width:100%; justify-content:center; }
+.budget-clients-collapse {
+  display:grid;
+  width:28px;
+  height:28px;
+  flex:0 0 28px;
+  place-items:center;
+  padding:0;
+  color:var(--muted);
+  background:var(--panel-2);
+  border:1px solid var(--line);
+  border-radius:7px;
+  font-size:20px;
+  line-height:1;
+}
+.budget-clients-collapse:hover { color:var(--text); background:var(--panel-selected); }
+
+.budget-price-panel { width:min(1260px,96vw); }
+.budget-price-table.excel-mode { padding-right:12px; padding-left:12px; }
+.budget-price-row.editable-row,
+.budget-price-table.excel-mode .budget-price-row.heading {
+  grid-template-columns: 100px minmax(230px,1.65fr) minmax(150px,.9fr) 76px 120px 88px 100px 36px;
+  gap:8px;
+}
+.budget-price-row.editable-row { min-height:48px; padding:6px 7px; }
+.budget-price-row.editable-row input,
+.budget-price-row.editable-row select {
+  width:100%;
+  min-width:0;
+  height:32px;
+  padding:0 7px;
+  color:var(--text);
+  background:transparent;
+  border:1px solid transparent;
+  border-radius:5px;
+  outline:none;
+  font:inherit;
+  font-size:calc(9px * var(--font-scale));
+}
+.budget-price-row.editable-row input:hover,
+.budget-price-row.editable-row select:hover { border-color:var(--line); background:var(--panel-2); }
+.budget-price-row.editable-row input:focus,
+.budget-price-row.editable-row select:focus { border-color:color-mix(in srgb,var(--accent) 55%,var(--line)); background:var(--bg); box-shadow:0 0 0 2px var(--accent-soft); }
+.product-name-cell { position:relative; min-width:0; }
+.product-name-cell input { padding-right:62px !important; }
+.product-name-cell .manual-tag { position:absolute; top:8px; right:6px; margin:0; }
+.suffix-input.compact { gap:3px; }
+.suffix-input.compact input { padding-right:2px; text-align:right; }
+.suffix-input.compact b { flex:0 0 auto; font-size:calc(8px * var(--font-scale)); }
+.budget-delete-product {
+  display:grid;
+  width:28px;
+  height:28px;
+  place-items:center;
+  justify-self:end;
+  padding:0;
+  color:var(--muted);
+  background:transparent;
+  border:1px solid transparent;
+  border-radius:6px;
+  font-size:18px;
+}
+.budget-delete-product:hover { color:var(--red); background:rgba(223,119,119,.08); border-color:rgba(223,119,119,.25); }
+
+@media (max-width: 1350px) {
+  .budget-columns.clients-collapsed { grid-template-columns:44px minmax(480px,1fr) minmax(500px,1fr); }
+  .budget-price-row.editable-row,
+  .budget-price-table.excel-mode .budget-price-row.heading { grid-template-columns:90px minmax(200px,1.5fr) 130px 70px 105px 78px 88px 32px; }
+}
+
+/* V8.1: cotización BNA en verde */
+.budget-fx-value strong,
+.budget-fx-value.editable:first-of-type input {
+  color:#69d39a;
+}
+.budget-fx-value.editable input {
+  color:#69d39a;
+  font-weight:700;
+}

@@ -178,10 +178,10 @@ function TransportPreview({ brand, client, items, number }) {
 
 function Budgets() {
   const [clients, setClients] = useState(() => readStored(CLIENTS_KEY, defaultClients))
-  const [products] = useState(() => readStored(PRODUCTS_KEY, defaultProducts))
+  const [products, setProducts] = useState(() => readStored(PRODUCTS_KEY, defaultProducts))
   const [manualProducts, setManualProducts] = useState(() => readStored(MANUAL_PRODUCTS_KEY, []))
   const [manualProductOpen, setManualProductOpen] = useState(false)
-  const [manualProductDraft, setManualProductDraft] = useState({ code: '', name: '', category: 'Agregados', currency: 'ARS', basePrice: '', vatRate: 21 })
+  const [manualProductDraft, setManualProductDraft] = useState({ code: '', name: '', category: 'Agregados', currency: 'ARS', basePrice: '', vatRate: 21, profitRate: 30 })
   const [defaultProfit, setDefaultProfit] = useState(() => numberValue(localStorage.getItem(DEFAULT_PROFIT_KEY), 30))
   const [fx, setFx] = useState(() => readStored(FX_KEY, { buy: 0, sell: 0, date: '', time: '', source: 'BNA', manual: false }))
   const [fxLoading, setFxLoading] = useState(false)
@@ -198,6 +198,7 @@ function Budgets() {
   const [notice, setNotice] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [priceListOpen, setPriceListOpen] = useState(false)
+  const [clientsCollapsed, setClientsCollapsed] = useState(false)
   const [clientDraft, setClientDraft] = useState(null)
   const [printPayload, setPrintPayload] = useState(null)
   const clientInput = useRef(null)
@@ -521,12 +522,13 @@ function Budgets() {
       basePrice,
       price: basePrice,
       vatRate: numberValue(manualProductDraft.vatRate, manualProductDraft.currency === 'USD' ? 21 : 0),
+      profitRate: Math.max(0, numberValue(manualProductDraft.profitRate, defaultProfit)),
       manual: true,
     }
     const next = [product, ...manualProducts]
     setManualProducts(next)
     localStorage.setItem(MANUAL_PRODUCTS_KEY, JSON.stringify(next))
-    setManualProductDraft({ code: '', name: '', category: 'Agregados', currency: 'ARS', basePrice: '', vatRate: 21 })
+    setManualProductDraft({ code: '', name: '', category: 'Agregados', currency: 'ARS', basePrice: '', vatRate: 21, profitRate: defaultProfit })
     setManualProductOpen(false)
     setNotice(`${name} fue agregado al catálogo manual.`)
   }
@@ -542,6 +544,48 @@ function Budgets() {
     const next = Math.max(0, numberValue(value))
     setDefaultProfit(next)
     localStorage.setItem(DEFAULT_PROFIT_KEY, String(next))
+  }
+
+
+  const updateCatalogProduct = (product, field, value) => {
+    const numericFields = new Set(['basePrice', 'vatRate', 'profitRate'])
+    const nextValue = numericFields.has(field) ? Math.max(0, numberValue(value)) : value
+    const updateOne = (candidate) => {
+      const same = product.id ? candidate.id === product.id : candidate.code === product.code
+      if (!same) return candidate
+      const updated = { ...candidate, [field]: nextValue }
+      if (field === 'basePrice') updated.price = nextValue
+      if (field === 'currency' && nextValue === 'USD' && !Number(updated.vatRate)) updated.vatRate = 21
+      return updated
+    }
+
+    if (product.manual) {
+      const next = manualProducts.map(updateOne)
+      setManualProducts(next)
+      localStorage.setItem(MANUAL_PRODUCTS_KEY, JSON.stringify(next))
+    } else {
+      const next = products.map(updateOne)
+      setProducts(next)
+      localStorage.setItem(PRODUCTS_KEY, JSON.stringify(next))
+    }
+    invalidateConfirmation()
+  }
+
+  const deleteCatalogProduct = (product) => {
+    if (!window.confirm(`¿Eliminar ${product.name || product.code} de la lista de precios?`)) return
+    const keep = (candidate) => product.id ? candidate.id !== product.id : candidate.code !== product.code
+    if (product.manual) {
+      const next = manualProducts.filter(keep)
+      setManualProducts(next)
+      localStorage.setItem(MANUAL_PRODUCTS_KEY, JSON.stringify(next))
+    } else {
+      const next = products.filter(keep)
+      setProducts(next)
+      localStorage.setItem(PRODUCTS_KEY, JSON.stringify(next))
+    }
+    setItems((current) => current.filter((item) => item.code !== product.code))
+    invalidateConfirmation()
+    setNotice(`${product.name || product.code} fue eliminado de la lista de precios.`)
   }
 
   const updateItem = (rowId, field, value) => {
@@ -578,7 +622,7 @@ function Budgets() {
           <button className="ghost-button" type="button" onClick={() => downloadClientsCsv(clients)}>Exportar clientes</button>
           <label className="ghost-button budget-file-button">Importar precios<input ref={productInput} type="file" accept=".xlsx,.xls" onChange={importProducts} /></label>
           <button className="ghost-button" type="button" onClick={() => setPriceListOpen(true)}>Ver lista de precios</button>
-          <button className="ghost-button" type="button" onClick={() => setManualProductOpen(true)}>＋ Agregar producto</button>
+          <button className="ghost-button" type="button" onClick={() => { setManualProductDraft((current) => ({ ...current, profitRate: defaultProfit })); setManualProductOpen(true) }}>＋ Agregar producto</button>
           <button className="primary-button" type="button" onClick={() => setSettingsOpen((current) => !current)}>Configurar marca</button>
         </div>
       </header>
@@ -604,17 +648,17 @@ function Budgets() {
       )}
 
       {viewMode === 'new' ? (
-        <div className="budget-columns">
-          <aside className="budget-clients-column">
-            <div className="budget-column-heading"><div><span>Base comercial</span><strong>Clientes</strong></div><div className="budget-heading-actions"><small>{clients.length}</small><button type="button" className="budget-add-client" onClick={addClient}>＋ Agregar</button></div></div>
-            <label className="budget-search"><span>⌕</span><input value={clientQuery} onChange={(event) => setClientQuery(event.target.value)} placeholder="Buscar cliente, CUIT…" /></label>
+        <div className={`budget-columns ${clientsCollapsed ? 'clients-collapsed' : ''}`}>
+          <aside className={`budget-clients-column ${clientsCollapsed ? 'collapsed' : ''}`}>
+            <div className="budget-column-heading"><div className="budget-clients-title"><span>Base comercial</span><strong>Clientes</strong></div><div className="budget-heading-actions">{!clientsCollapsed && <><small>{clients.length}</small><button type="button" className="budget-add-client" onClick={addClient}>＋ Agregar</button></>}<button type="button" className="budget-clients-collapse" onClick={() => setClientsCollapsed((value) => !value)} aria-label={clientsCollapsed ? 'Mostrar clientes' : 'Ocultar clientes'}>{clientsCollapsed ? '›' : '‹'}</button></div></div>
+            {!clientsCollapsed && <><label className="budget-search"><span>⌕</span><input value={clientQuery} onChange={(event) => setClientQuery(event.target.value)} placeholder="Buscar cliente, CUIT…" /></label>
             <div className="budget-client-list">
               {filteredClients.length ? filteredClients.map((client) => (
                 <button key={client.id} type="button" className={`budget-client-card ${selectedClient?.id === client.id ? 'active' : ''}`} onClick={() => selectClient(client.id)}>
                   <strong>{client.name}</strong><span>{client.legalName}</span><small>{client.cuit || 'Sin CUIT'} · {client.discount || '0%'}</small>
                 </button>
               )) : <div className="budget-empty-list">No se encontraron clientes.</div>}
-            </div>
+            </div></>}
           </aside>
 
           <section className="budget-editor-column">
@@ -711,6 +755,7 @@ function Budgets() {
               <label><span>Moneda</span><select value={manualProductDraft.currency} onChange={(event) => setManualProductDraft((current) => ({ ...current, currency: event.target.value, vatRate: event.target.value === 'USD' ? 21 : current.vatRate }))}><option value="ARS">Pesos ARS</option><option value="USD">Dólares USD</option></select></label>
               <label><span>Precio catálogo</span><input type="number" min="0" step="0.01" value={manualProductDraft.basePrice} onChange={(event) => setManualProductDraft((current) => ({ ...current, basePrice: event.target.value }))} /></label>
               <label><span>IVA</span><div className="suffix-input"><input type="number" min="0" step="0.1" value={manualProductDraft.vatRate} onChange={(event) => setManualProductDraft((current) => ({ ...current, vatRate: event.target.value }))} /><b>%</b></div></label>
+              <label><span>Ganancia predeterminada</span><div className="suffix-input"><input type="number" min="0" step="0.1" value={manualProductDraft.profitRate} onChange={(event) => setManualProductDraft((current) => ({ ...current, profitRate: event.target.value }))} /><b>%</b></div></label>
             </div>
             <footer><button className="ghost-button" type="button" onClick={() => setManualProductOpen(false)}>Cancelar</button><button className="primary-button" type="button" onClick={saveManualProduct}>Guardar producto</button></footer>
           </section>
@@ -725,9 +770,20 @@ function Budgets() {
               <button type="button" onClick={() => setPriceListOpen(false)} aria-label="Cerrar">×</button>
             </header>
             <label className="budget-search budget-price-search"><span>⌕</span><input autoFocus value={priceQuery} onChange={(event) => setPriceQuery(event.target.value)} placeholder="Buscar por código, producto o categoría…" /></label>
-            <div className="budget-price-table">
-              <div className="budget-price-row heading"><span>Código</span><span>Producto</span><span>Categoría</span><span>Precio base</span></div>
-              {visiblePrices.map((product) => <div className={`budget-price-row ${product.manual ? 'manual' : ''}`} key={product.code}><strong>{product.code}</strong><span>{product.name}{product.manual && <small className="manual-tag">Agregado</small>}</span><small>{product.category || 'Sin categoría'}</small><strong>{product.currency === 'USD' ? `USD ${Number(product.basePrice ?? product.price).toLocaleString('es-AR', { maximumFractionDigits: 2 })}` : formatCurrency(product.price)}</strong></div>)}
+            <div className="budget-price-table excel-mode">
+              <div className="budget-price-row heading"><span>Código</span><span>Producto</span><span>Categoría</span><span>Moneda</span><span>Precio base</span><span>IVA</span><span>Ganancia</span><span></span></div>
+              {visiblePrices.map((product) => (
+                <div className={`budget-price-row editable-row ${product.manual ? 'manual' : ''}`} key={product.id || product.code}>
+                  <input value={product.code || ''} onChange={(event) => updateCatalogProduct(product, 'code', event.target.value)} />
+                  <div className="product-name-cell"><input value={product.name || ''} onChange={(event) => updateCatalogProduct(product, 'name', event.target.value)} />{product.manual && <small className="manual-tag">Agregado</small>}</div>
+                  <input value={product.category || ''} onChange={(event) => updateCatalogProduct(product, 'category', event.target.value)} />
+                  <select value={product.currency === 'USD' ? 'USD' : 'ARS'} onChange={(event) => updateCatalogProduct(product, 'currency', event.target.value)}><option value="ARS">ARS</option><option value="USD">USD</option></select>
+                  <input type="number" min="0" step="0.01" value={product.basePrice ?? product.price ?? 0} onChange={(event) => updateCatalogProduct(product, 'basePrice', event.target.value)} />
+                  <div className="suffix-input compact"><input type="number" min="0" step="0.1" value={product.vatRate ?? (product.currency === 'USD' ? 21 : 0)} onChange={(event) => updateCatalogProduct(product, 'vatRate', event.target.value)} /><b>%</b></div>
+                  <div className="suffix-input compact"><input type="number" min="0" step="0.1" value={product.profitRate ?? (product.currency === 'USD' ? defaultProfit : 0)} onChange={(event) => updateCatalogProduct(product, 'profitRate', event.target.value)} /><b>%</b></div>
+                  <button type="button" className="budget-delete-product" onClick={() => deleteCatalogProduct(product)} aria-label={`Eliminar ${product.name || product.code}`}>×</button>
+                </div>
+              ))}
             </div>
           </section>
         </div>
