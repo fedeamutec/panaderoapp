@@ -7,6 +7,10 @@ const CLIENTS_KEY = 'panadero-budget-clients'
 const PRODUCTS_KEY = 'panadero-budget-products'
 const BRAND_KEY = 'panadero-budget-brand'
 const BUDGETS_KEY = 'panadero-generated-budgets'
+const MANUAL_PRODUCTS_KEY = 'panadero-budget-manual-products'
+const FX_KEY = 'panadero-budget-bna-fx'
+const DEFAULT_PROFIT_KEY = 'panadero-budget-default-profit'
+const API_BASE = import.meta.env.DEV ? 'http://localhost:3001/api' : 'https://api.panaderoapp.com/api'
 
 function readStored(key, fallback) {
   try {
@@ -74,6 +78,23 @@ function downloadClientsCsv(clients) {
 
 function createClientId() {
   return `client-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function numberValue(value, fallback = 0) {
+  const parsed = Number(String(value ?? '').replace(',', '.'))
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function calculateProductPricing(product, { fxSale = 0, profit = 0, discountFactor = 1 } = {}) {
+  const currency = product.currency === 'USD' ? 'USD' : 'ARS'
+  const basePrice = numberValue(product.basePrice ?? product.price)
+  const vatRate = numberValue(product.vatRate, currency === 'USD' ? 21 : 0)
+  const profitRate = numberValue(product.profitRate, profit)
+  const convertedPrice = currency === 'USD' ? basePrice * numberValue(fxSale) : basePrice
+  const priceWithVat = convertedPrice * (1 + vatRate / 100)
+  const commercialPrice = priceWithVat * (1 + profitRate / 100)
+  const discountedPrice = commercialPrice * discountFactor
+  return { currency, basePrice, vatRate, profitRate, fxSale: currency === 'USD' ? numberValue(fxSale) : null, convertedPrice, priceWithVat, commercialPrice, discountedPrice }
 }
 
 function budgetTotal(items) {
@@ -158,6 +179,12 @@ function TransportPreview({ brand, client, items, number }) {
 function Budgets() {
   const [clients, setClients] = useState(() => readStored(CLIENTS_KEY, defaultClients))
   const [products] = useState(() => readStored(PRODUCTS_KEY, defaultProducts))
+  const [manualProducts, setManualProducts] = useState(() => readStored(MANUAL_PRODUCTS_KEY, []))
+  const [manualProductOpen, setManualProductOpen] = useState(false)
+  const [manualProductDraft, setManualProductDraft] = useState({ code: '', name: '', category: 'Agregados', currency: 'ARS', basePrice: '', vatRate: 21 })
+  const [defaultProfit, setDefaultProfit] = useState(() => numberValue(localStorage.getItem(DEFAULT_PROFIT_KEY), 30))
+  const [fx, setFx] = useState(() => readStored(FX_KEY, { buy: 0, sell: 0, date: '', time: '', source: 'BNA', manual: false }))
+  const [fxLoading, setFxLoading] = useState(false)
   const [brand, setBrand] = useState(() => readStored(BRAND_KEY, { name: '', subtitle: '', validity: '10 días', conditions: '' }))
   const [selectedClientId, setSelectedClientId] = useState(() => readStored(CLIENTS_KEY, defaultClients)[0]?.id || '')
   const [clientQuery, setClientQuery] = useState('')
@@ -176,8 +203,30 @@ function Budgets() {
   const clientInput = useRef(null)
   const productInput = useRef(null)
 
+  const allProducts = useMemo(() => [...manualProducts, ...products], [manualProducts, products])
+
   const selectedClient = clients.find((client) => client.id === selectedClientId) || clients[0] || null
   const selectedGenerated = generatedBudgets.find((budget) => budget.id === selectedGeneratedId) || generatedBudgets[0] || null
+
+  useEffect(() => {
+    const loadFx = async () => {
+      setFxLoading(true)
+      try {
+        const response = await fetch(`${API_BASE}/exchange/bna`)
+        if (!response.ok) throw new Error('No se pudo obtener BNA')
+        const data = await response.json()
+        if (!data?.sell) throw new Error('Cotización incompleta')
+        const next = { ...data, manual: false }
+        setFx(next)
+        localStorage.setItem(FX_KEY, JSON.stringify(next))
+      } catch {
+        // Conserva la última cotización guardada y permite editarla manualmente.
+      } finally {
+        setFxLoading(false)
+      }
+    }
+    loadFx()
+  }, [])
 
   useEffect(() => {
     setClientDraft(selectedClient ? { ...selectedClient } : null)
@@ -197,20 +246,64 @@ function Budgets() {
   const filteredClients = useMemo(() => {
     const query = normalize(clientQuery)
     if (!query) return clients
-    return clients.filter((client) => [client.name, client.legalName, client.cuit, client.locality].some((value) => normalize(value).includes(query)))
+
+    const scoreClient = (client) => {
+      const fields = [
+        { value: client.name, weight: 0 },
+        { value: client.legalName, weight: 1 },
+        { value: client.cuit, weight: 2 },
+        { value: client.locality, weight: 3 },
+      ]
+
+      let bestScore = Number.POSITIVE_INFINITY
+
+      fields.forEach(({ value, weight }) => {
+        const normalizedValue = normalize(value)
+        if (!normalizedValue) return
+
+        if (normalizedValue === query) {
+          bestScore = Math.min(bestScore, weight)
+          return
+        }
+
+        if (normalizedValue.startsWith(query)) {
+          bestScore = Math.min(bestScore, 10 + weight)
+          return
+        }
+
+        const words = normalizedValue.split(/\s+/)
+        if (words.some((word) => word.startsWith(query))) {
+          bestScore = Math.min(bestScore, 20 + weight)
+          return
+        }
+
+        const position = normalizedValue.indexOf(query)
+        if (position >= 0) {
+          bestScore = Math.min(bestScore, 30 + weight + position / 1000)
+        }
+      })
+
+      return bestScore
+    }
+
+    return clients
+      .map((client, index) => ({ client, index, score: scoreClient(client) }))
+      .filter((entry) => Number.isFinite(entry.score))
+      .sort((a, b) => a.score - b.score || a.index - b.index)
+      .map((entry) => entry.client)
   }, [clientQuery, clients])
 
   const productSuggestions = useMemo(() => {
     const query = normalize(productQuery)
     if (!query) return []
-    return products.filter((product) => normalize(`${product.code} ${product.name} ${product.category}`).includes(query)).slice(0, 10)
-  }, [productQuery, products])
+    return allProducts.filter((product) => normalize(`${product.code} ${product.name} ${product.category}`).includes(query)).slice(0, 10)
+  }, [productQuery, allProducts])
 
   const visiblePrices = useMemo(() => {
     const query = normalize(priceQuery)
-    if (!query) return products
-    return products.filter((product) => normalize(`${product.code} ${product.name} ${product.category}`).includes(query))
-  }, [priceQuery, products])
+    if (!query) return allProducts
+    return allProducts.filter((product) => normalize(`${product.code} ${product.name} ${product.category}`).includes(query))
+  }, [priceQuery, allProducts])
 
   const hasClientChanges = Boolean(clientDraft && selectedClient && JSON.stringify(clientDraft) !== JSON.stringify(selectedClient))
 
@@ -385,21 +478,70 @@ function Budgets() {
   const addProduct = (product) => {
     invalidateConfirmation()
     const discount = parseDiscount(clientDraft?.discount || selectedClient?.discount)
+    const pricing = calculateProductPricing(product, { fxSale: fx.sell, profit: defaultProfit, discountFactor: discount.factor })
+    if (product.currency === 'USD' && !pricing.fxSale) {
+      setNotice('Ingresá una cotización de dólar venta antes de agregar productos en USD.')
+      return
+    }
     setItems((current) => {
       const existing = current.find((item) => item.code === product.code)
       if (existing) return current.map((item) => item.code === product.code ? { ...item, quantity: item.quantity + 1, subtotal: item.discountedPrice * (item.quantity + 1) } : item)
-      const discountedPrice = product.price * discount.factor
       return [...current, {
         ...product,
+        ...pricing,
+        price: pricing.commercialPrice,
         rowId: `${product.code}-${Date.now()}`,
         discountLabel: discount.label,
         discountFactor: discount.factor,
-        discountedPrice,
         quantity: 1,
-        subtotal: discountedPrice,
+        subtotal: pricing.discountedPrice,
       }]
     })
     setProductQuery('')
+  }
+
+  const saveManualProduct = () => {
+    const code = clean(manualProductDraft.code)
+    const name = clean(manualProductDraft.name)
+    const basePrice = numberValue(manualProductDraft.basePrice)
+    if (!code || !name || basePrice <= 0) {
+      setNotice('Completá código, producto y un precio mayor a cero.')
+      return
+    }
+    if (allProducts.some((product) => normalize(product.code) === normalize(code))) {
+      setNotice('Ya existe un producto con ese código.')
+      return
+    }
+    const product = {
+      id: `manual-${Date.now()}`,
+      code,
+      name,
+      category: clean(manualProductDraft.category) || 'Agregados',
+      currency: manualProductDraft.currency === 'USD' ? 'USD' : 'ARS',
+      basePrice,
+      price: basePrice,
+      vatRate: numberValue(manualProductDraft.vatRate, manualProductDraft.currency === 'USD' ? 21 : 0),
+      manual: true,
+    }
+    const next = [product, ...manualProducts]
+    setManualProducts(next)
+    localStorage.setItem(MANUAL_PRODUCTS_KEY, JSON.stringify(next))
+    setManualProductDraft({ code: '', name: '', category: 'Agregados', currency: 'ARS', basePrice: '', vatRate: 21 })
+    setManualProductOpen(false)
+    setNotice(`${name} fue agregado al catálogo manual.`)
+  }
+
+  const updateFxSell = (value) => {
+    const next = { ...fx, sell: numberValue(value), manual: true, date: new Date().toLocaleDateString('es-AR'), time: new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) }
+    setFx(next)
+    localStorage.setItem(FX_KEY, JSON.stringify(next))
+    invalidateConfirmation()
+  }
+
+  const updateDefaultProfit = (value) => {
+    const next = Math.max(0, numberValue(value))
+    setDefaultProfit(next)
+    localStorage.setItem(DEFAULT_PROFIT_KEY, String(next))
   }
 
   const updateItem = (rowId, field, value) => {
@@ -412,6 +554,10 @@ function Budgets() {
         const parsed = parseDiscount(value)
         next.discountFactor = parsed.factor
         next.discountedPrice = next.price * parsed.factor
+      }
+      if (field === 'profitRate' && next.currency === 'USD') {
+        const pricing = calculateProductPricing(next, { fxSale: next.fxSale || fx.sell, profit: numberValue(value), discountFactor: next.discountFactor })
+        Object.assign(next, pricing, { price: pricing.commercialPrice })
       }
       next.subtotal = next.discountedPrice * next.quantity
       return next
@@ -432,11 +578,20 @@ function Budgets() {
           <button className="ghost-button" type="button" onClick={() => downloadClientsCsv(clients)}>Exportar clientes</button>
           <label className="ghost-button budget-file-button">Importar precios<input ref={productInput} type="file" accept=".xlsx,.xls" onChange={importProducts} /></label>
           <button className="ghost-button" type="button" onClick={() => setPriceListOpen(true)}>Ver lista de precios</button>
+          <button className="ghost-button" type="button" onClick={() => setManualProductOpen(true)}>＋ Agregar producto</button>
           <button className="primary-button" type="button" onClick={() => setSettingsOpen((current) => !current)}>Configurar marca</button>
         </div>
       </header>
 
       {notice && <button type="button" className="notice-bar" onClick={() => setNotice('')}><span>{notice}</span><strong>×</strong></button>}
+
+      <section className="budget-fx-strip">
+        <div className="budget-fx-source"><span>Dólar BNA · Billete</span><small>{fxLoading ? 'Actualizando…' : fx.manual ? 'Cotización manual' : [fx.date, fx.time].filter(Boolean).join(' · ') || 'Última cotización disponible'}</small></div>
+        <div className="budget-fx-value"><span>Compra</span><strong>{fx.buy ? formatCurrency(fx.buy) : '—'}</strong></div>
+        <label className="budget-fx-value editable"><span>Venta usada</span><input type="number" min="0" step="0.01" value={fx.sell || ''} onChange={(event) => updateFxSell(event.target.value)} placeholder="Cotización" /></label>
+        <label className="budget-fx-value editable"><span>Ganancia USD predet.</span><div><input type="number" min="0" step="0.1" value={defaultProfit} onChange={(event) => updateDefaultProfit(event.target.value)} /><b>%</b></div></label>
+        <small className="budget-fx-note">La cotización y la ganancia son internas y no aparecen en el PDF.</small>
+      </section>
 
       {settingsOpen && (
         <section className="budget-brand-settings">
@@ -489,13 +644,16 @@ function Budgets() {
 
             <div className="budget-product-picker">
               <label className="budget-search"><span>＋</span><input value={productQuery} onChange={(event) => setProductQuery(event.target.value)} placeholder="Escribí código o producto…" disabled={!products.length || !selectedClient} /></label>
-              {productSuggestions.length > 0 && <div className="budget-product-suggestions">{productSuggestions.map((product) => <button key={product.code} type="button" onClick={() => addProduct(product)}><span><strong>{product.code}</strong>{product.name}</span><small>{formatCurrency(product.price)}</small></button>)}</div>}
+              {productSuggestions.length > 0 && <div className="budget-product-suggestions">{productSuggestions.map((product) => <button key={product.code} type="button" onClick={() => addProduct(product)}><span><strong>{product.code}</strong>{product.name}</span><small>{product.currency === 'USD' ? `USD ${Number(product.basePrice ?? product.price).toLocaleString('es-AR')}` : formatCurrency(product.price)}</small></button>)}</div>}
             </div>
 
             <div className="budget-item-editor">
               {items.map((item) => (
                 <div className="budget-item-card" key={item.rowId}>
-                  <div className="budget-item-name"><small>{item.code}</small><strong>{item.name}</strong></div>
+                  <div className="budget-item-name"><small>{item.code}{item.currency === 'USD' ? ' · USD' : ''}</small><strong>{item.name}</strong>{item.currency === 'USD' && <em>Catálogo USD {Number(item.basePrice).toLocaleString('es-AR', { maximumFractionDigits: 2 })}</em>}</div>
+                  {item.currency === 'USD' && <label className="internal-price"><span>Dólar venta</span><strong>{formatCurrency(item.fxSale)}</strong></label>}
+                  {item.currency === 'USD' && <label className="internal-price"><span>IVA</span><strong>{item.vatRate}%</strong></label>}
+                  {item.currency === 'USD' && <label className="internal-price"><span>Ganancia</span><input type="number" min="0" step="0.1" value={item.profitRate} onChange={(event) => updateItem(item.rowId, 'profitRate', event.target.value)} /></label>}
                   <label><span>Precio</span><strong>{formatCurrency(item.price)}</strong></label>
                   <label><span>Descuento</span><input value={item.discountLabel} onChange={(event) => updateItem(item.rowId, 'discountLabel', event.target.value)} /></label>
                   <label><span>Precio neto</span><strong>{formatCurrency(item.discountedPrice)}</strong></label>
@@ -542,17 +700,34 @@ function Budgets() {
         </div>
       )}
 
+      {manualProductOpen && (
+        <div className="budget-modal-backdrop" role="presentation" onMouseDown={() => setManualProductOpen(false)}>
+          <section className="budget-manual-product-panel" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
+            <header><div><span>Catálogo propio</span><h2>Agregar producto</h2><small>Quedará separado de la lista importada.</small></div><button type="button" onClick={() => setManualProductOpen(false)}>×</button></header>
+            <div className="budget-manual-form">
+              <label><span>Código</span><input value={manualProductDraft.code} onChange={(event) => setManualProductDraft((current) => ({ ...current, code: event.target.value }))} /></label>
+              <label className="wide"><span>Producto / título</span><input value={manualProductDraft.name} onChange={(event) => setManualProductDraft((current) => ({ ...current, name: event.target.value }))} /></label>
+              <label><span>Categoría</span><input value={manualProductDraft.category} onChange={(event) => setManualProductDraft((current) => ({ ...current, category: event.target.value }))} /></label>
+              <label><span>Moneda</span><select value={manualProductDraft.currency} onChange={(event) => setManualProductDraft((current) => ({ ...current, currency: event.target.value, vatRate: event.target.value === 'USD' ? 21 : current.vatRate }))}><option value="ARS">Pesos ARS</option><option value="USD">Dólares USD</option></select></label>
+              <label><span>Precio catálogo</span><input type="number" min="0" step="0.01" value={manualProductDraft.basePrice} onChange={(event) => setManualProductDraft((current) => ({ ...current, basePrice: event.target.value }))} /></label>
+              <label><span>IVA</span><div className="suffix-input"><input type="number" min="0" step="0.1" value={manualProductDraft.vatRate} onChange={(event) => setManualProductDraft((current) => ({ ...current, vatRate: event.target.value }))} /><b>%</b></div></label>
+            </div>
+            <footer><button className="ghost-button" type="button" onClick={() => setManualProductOpen(false)}>Cancelar</button><button className="primary-button" type="button" onClick={saveManualProduct}>Guardar producto</button></footer>
+          </section>
+        </div>
+      )}
+
       {priceListOpen && (
         <div className="budget-modal-backdrop" role="presentation" onMouseDown={() => setPriceListOpen(false)}>
           <section className="budget-price-panel" role="dialog" aria-modal="true" aria-label="Lista de precios" onMouseDown={(event) => event.stopPropagation()}>
             <header>
-              <div><span>Catálogo comercial</span><h2>Lista de precios</h2><small>{visiblePrices.length} de {products.length} productos</small></div>
+              <div><span>Catálogo comercial</span><h2>Lista de precios</h2><small>{visiblePrices.length} de {allProducts.length} productos · {manualProducts.length} agregados manualmente</small></div>
               <button type="button" onClick={() => setPriceListOpen(false)} aria-label="Cerrar">×</button>
             </header>
             <label className="budget-search budget-price-search"><span>⌕</span><input autoFocus value={priceQuery} onChange={(event) => setPriceQuery(event.target.value)} placeholder="Buscar por código, producto o categoría…" /></label>
             <div className="budget-price-table">
-              <div className="budget-price-row heading"><span>Código</span><span>Producto</span><span>Categoría</span><span>Precio lista / neto</span></div>
-              {visiblePrices.map((product) => <div className="budget-price-row" key={product.code}><strong>{product.code}</strong><span>{product.name}</span><small>{product.category || 'Sin categoría'}</small><strong>{formatCurrency(product.price)}</strong></div>)}
+              <div className="budget-price-row heading"><span>Código</span><span>Producto</span><span>Categoría</span><span>Precio base</span></div>
+              {visiblePrices.map((product) => <div className={`budget-price-row ${product.manual ? 'manual' : ''}`} key={product.code}><strong>{product.code}</strong><span>{product.name}{product.manual && <small className="manual-tag">Agregado</small>}</span><small>{product.category || 'Sin categoría'}</small><strong>{product.currency === 'USD' ? `USD ${Number(product.basePrice ?? product.price).toLocaleString('es-AR', { maximumFractionDigits: 2 })}` : formatCurrency(product.price)}</strong></div>)}
             </div>
           </section>
         </div>

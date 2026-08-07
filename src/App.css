@@ -1678,3 +1678,100 @@ body,
 .report-coming-soon > div b { color:var(--subtle); font-weight:500; }
 @media (max-width: 1040px) { .report-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media (max-width: 680px) { .reports-header { align-items:flex-start; padding:18px; } .reports-content { padding:14px; } .report-grid { grid-template-columns:1fr; } .report-section > header { align-items:flex-start; flex-direction:column; } .report-section header small { text-align:left; } }
+
+/* ===== Presupuesto V6: búsqueda por relevancia y tipografía legible ===== */
+.budget-item-card {
+  min-height: 68px;
+  padding-top: 15px;
+  padding-bottom: 15px;
+}
+
+.budget-item-name small,
+.budget-item-card label span {
+  font-size: calc(9px * var(--font-scale));
+}
+
+.budget-item-name strong,
+.budget-item-card label strong {
+  font-size: calc(11.5px * var(--font-scale));
+  line-height: 1.35;
+}
+
+.budget-item-card input {
+  height: 38px;
+  font-size: calc(11.5px * var(--font-scale));
+  font-weight: 650;
+}
+
+.budget-product-picker .budget-search input,
+.budget-product-suggestion strong,
+.budget-product-suggestion small {
+  font-size: calc(11px * var(--font-scale));
+}
+
+.budget-paper {
+  font-size: 11px;
+}
+
+.budget-paper-client {
+  font-size: 11px;
+  line-height: 1.75;
+}
+
+.budget-paper-client > span {
+  font-size: 9px;
+}
+
+.budget-paper-client > strong {
+  font-size: 15px;
+}
+
+.budget-paper-row {
+  min-height: 39px;
+  align-items: center;
+  padding-top: 11px;
+  padding-bottom: 11px;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.budget-paper-row.heading {
+  font-size: 8.5px;
+}
+
+.budget-paper-row span:nth-child(2) {
+  font-weight: 600;
+}
+
+.budget-paper-footer span {
+  font-size: 9px;
+}
+
+.budget-paper-footer strong {
+  font-size: 13px;
+}
+
+.budget-paper-footer small {
+  font-size: 9px;
+}
+
+.budget-paper-total strong {
+  font-size: 25px;
+}
+
+/* Presupuesto: catálogo manual + cotización BNA */
+.budget-fx-strip{display:flex;align-items:center;gap:18px;min-height:58px;padding:8px 20px;border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--panel) 82%,#0b0b0b)}
+.budget-fx-source{min-width:150px}.budget-fx-source span,.budget-fx-source small{display:block}.budget-fx-source span{font-size:calc(9px * var(--font-scale));font-weight:750}.budget-fx-source small{margin-top:3px;color:var(--muted);font-size:calc(7.5px * var(--font-scale))}
+.budget-fx-value{min-width:95px}.budget-fx-value>span{display:block;margin-bottom:4px;color:var(--subtle);font-size:calc(7.5px * var(--font-scale));font-weight:700;text-transform:uppercase}.budget-fx-value strong{font-size:calc(10px * var(--font-scale))}
+.budget-fx-value.editable input{width:105px;height:29px;padding:0 8px;color:var(--text);background:var(--bg);border:1px solid var(--line);border-radius:6px;font:inherit;font-size:calc(9px * var(--font-scale))}.budget-fx-value.editable>div{display:flex;align-items:center;gap:5px}.budget-fx-value.editable b{color:var(--muted);font-size:11px}
+.budget-fx-note{margin-left:auto;max-width:240px;color:var(--muted);font-size:calc(7.5px * var(--font-scale));line-height:1.35;text-align:right}
+.budget-item-name em{display:block;margin-top:4px;color:#d6b45f;font-size:calc(7.5px * var(--font-scale));font-style:normal}
+.budget-item-card:has(.internal-price){grid-template-columns:minmax(145px,1.55fr) .65fr .45fr .58fr .75fr .65fr .8fr .48fr .82fr;gap:7px}
+.budget-item-card .internal-price{padding:5px 6px;border:1px solid color-mix(in srgb,#d6b45f 28%,var(--line));border-radius:6px;background:color-mix(in srgb,#d6b45f 5%,var(--panel-2))}
+.budget-item-card .internal-price>span{color:#c8ad68}.budget-item-card .internal-price input{height:28px}
+.budget-manual-product-panel{width:min(720px,94vw);overflow:hidden;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 28px 90px rgba(0,0,0,.48)}
+.budget-manual-product-panel>header{display:flex;align-items:flex-start;justify-content:space-between;padding:18px 20px;border-bottom:1px solid var(--line)}.budget-manual-product-panel header span{color:var(--subtle);font-size:9px;font-weight:700;text-transform:uppercase}.budget-manual-product-panel header h2{margin:4px 0;font-size:18px}.budget-manual-product-panel header small{color:var(--muted)}.budget-manual-product-panel header button{width:30px;height:30px;color:var(--muted);background:var(--panel-2);border:1px solid var(--line);border-radius:7px;font-size:20px}
+.budget-manual-form{display:grid;grid-template-columns:1fr 1.5fr;gap:12px;padding:20px}.budget-manual-form label span{display:block;margin-bottom:6px;color:var(--subtle);font-size:9px;font-weight:650}.budget-manual-form input,.budget-manual-form select{width:100%;height:38px;padding:0 10px;color:var(--text);background:var(--bg);border:1px solid var(--line);border-radius:7px;font:inherit}.budget-manual-form .wide{grid-column:span 1}.suffix-input{display:flex;align-items:center;gap:7px}.suffix-input b{color:var(--muted)}
+.budget-manual-product-panel>footer{display:flex;justify-content:flex-end;gap:8px;padding:14px 20px;border-top:1px solid var(--line)}
+.budget-price-row.manual{background:color-mix(in srgb,var(--accent) 4%,transparent)}.manual-tag{display:inline-block!important;margin-left:7px;padding:2px 5px;color:var(--muted);border:1px solid var(--line);border-radius:4px;font-size:7px!important;text-transform:uppercase}
+@media(max-width:1050px){.budget-fx-strip{flex-wrap:wrap}.budget-fx-note{width:100%;max-width:none;margin-left:0;text-align:left}.budget-item-card:has(.internal-price){grid-template-columns:repeat(3,minmax(90px,1fr))}.budget-item-name{grid-column:1/-1}}
