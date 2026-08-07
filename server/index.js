@@ -10,6 +10,7 @@ import {
   getOrderDetail,
   getOrders,
   getStatus,
+  getSyncStatus,
   syncOrders,
   uploadFiscalDocument,
 } from './mercadolibre.js'
@@ -421,18 +422,30 @@ app.get('/api/mercadolibre/callback', async (req, res) => {
   }
 })
 
-app.post('/api/mercadolibre/sync', async (req, res) => {
+app.post('/api/mercadolibre/sync', async (_req, res) => {
   try {
-    const page = Number(req.query.page || req.body?.page || 1)
-    const pageSize = Number(req.query.pageSize || req.body?.pageSize || 50)
-    res.json(await syncOrders({ page, pageSize }))
+    const status = await syncOrders()
+    res.status(status.running ? 202 : 200).json(status)
   } catch (error) {
     res.status(500).json({ error: error.message })
   }
 })
 
-app.get('/api/mercadolibre/orders', async (_req, res) => {
-  try { res.json(await getOrders()) } catch (error) { res.status(500).json({ error: error.message }) }
+app.get('/api/mercadolibre/sync-status', async (_req, res) => {
+  try { res.json(await getSyncStatus()) } catch (error) { res.status(500).json({ error: error.message }) }
+})
+
+app.get('/api/mercadolibre/orders', async (req, res) => {
+  try {
+    res.json(await getOrders({
+      page: req.query.page,
+      pageSize: req.query.pageSize,
+      query: req.query.query,
+      status: req.query.status,
+    }))
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
 })
 
 app.get('/api/mercadolibre/order/:id', async (req, res) => {

@@ -4,7 +4,6 @@ import { readStore, updateStore } from './store.js'
 const AUTH_URL = 'https://auth.mercadolibre.com.ar/authorization'
 const TOKEN_URL = 'https://api.mercadolibre.com/oauth/token'
 const API_URL = 'https://api.mercadolibre.com'
-const INVOICE_CHECK_CONCURRENCY = 5
 
 function config() {
   const clientId = process.env.ML_CLIENT_ID
@@ -142,24 +141,45 @@ async function getAccessToken() {
   return refreshAccessToken(store.tokens.refreshToken)
 }
 
-async function apiFetch(pathname, suppliedToken) {
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function mercadoLibreError(payload, status) {
+  const error = new Error(
+    payload?.message
+    || payload?.error
+    || `Error de Mercado Libre (${status})`
+  )
+  error.status = status
+  return error
+}
+
+async function apiFetch(pathname, suppliedToken, { retries = 3 } = {}) {
   const token = suppliedToken || await getAccessToken()
 
-  const response = await fetch(`${API_URL}${pathname}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  })
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const response = await fetch(`${API_URL}${pathname}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
 
-  const payload = await response.json().catch(() => ({}))
+    const payload = await response.json().catch(() => ({}))
 
-  if (!response.ok) {
-    throw new Error(
-      payload.message
-      || payload.error
-      || `Error de Mercado Libre (${response.status})`
-    )
+    if (response.ok) return payload
+
+    if (response.status === 429 && attempt < retries) {
+      const retryAfterHeader = Number(response.headers.get('retry-after'))
+      const retryAfterMs = Number.isFinite(retryAfterHeader) && retryAfterHeader > 0
+        ? retryAfterHeader * 1000
+        : Math.min(15_000, 1_500 * (2 ** attempt))
+      await sleep(retryAfterMs)
+      continue
+    }
+
+    throw mercadoLibreError(payload, response.status)
   }
 
-  return payload
+  throw new Error('Mercado Libre no respondió después de varios intentos.')
 }
 
 function fiscalDocumentReference(order = {}) {
@@ -189,6 +209,10 @@ async function readFiscalDocumentsForOrder(order, suppliedToken) {
     })
 
     const payload = await response.json().catch(() => ({}))
+
+    if (response.status === 429) {
+      throw mercadoLibreError(payload, 429)
+    }
 
     // Mercado Libre responde 404 cuando el pack no tiene factura cargada.
     if (response.status === 404) {
@@ -231,6 +255,7 @@ async function readFiscalDocumentsForOrder(order, suppliedToken) {
       invoiceCheckError: null,
     }
   } catch (error) {
+    if (error?.status === 429) throw error
     return {
       packId,
       invoiceAttached: false,
@@ -239,30 +264,6 @@ async function readFiscalDocumentsForOrder(order, suppliedToken) {
       invoiceCheckError: error.message,
     }
   }
-}
-
-async function mapWithConcurrency(values, concurrency, mapper) {
-  const results = new Array(values.length)
-  let nextIndex = 0
-
-  async function worker() {
-    while (nextIndex < values.length) {
-      const currentIndex = nextIndex
-      nextIndex += 1
-      results[currentIndex] = await mapper(values[currentIndex], currentIndex)
-    }
-  }
-
-  const workerCount = Math.min(
-    Math.max(1, Number(concurrency) || 1),
-    values.length || 1
-  )
-
-  await Promise.all(
-    Array.from({ length: workerCount }, () => worker())
-  )
-
-  return results
 }
 
 function normalizeOrder(order, fiscalInfo = {}) {
@@ -544,51 +545,367 @@ export async function uploadFiscalDocument(orderId, pdfBuffer, filename = 'factu
   }
 }
 
-export async function getFiscalDocuments(orderId) {
-  if (!orderId) throw new Error('Falta el ID de la venta')
+const SYNC_PAGE_SIZE = 50
+const SYNC_DETAIL_DELAY_MS = 300
+const SYNC_DETAIL_CACHE_MS = 6 * 60 * 60 * 1000
+let syncPromise = null
+let runtimeSyncStatus = null
 
-  const safeOrderId = encodeURIComponent(String(orderId))
-  const order = await apiFetch(`/orders/${safeOrderId}`)
-  return readFiscalDocumentsForOrder(order)
+function detailCacheIsFresh(detail) {
+  const timestamp = Date.parse(detail?.syncedAt || '')
+  return Number.isFinite(timestamp) && Date.now() - timestamp < SYNC_DETAIL_CACHE_MS
 }
 
-export async function getOrderDetail(orderId) {
-  if (!orderId) throw new Error('Falta el ID de la venta')
+function detailFromStoredOrder(order = {}) {
+  return {
+    id: String(order.id || ''),
+    packId: order.packId || null,
+    status: order.marketplaceStatus || '',
+    dateCreated: order.dateCreated || null,
+    invoiceAttached: Boolean(order.invoiceAttached),
+    invoiceSource: order.invoiceSource || null,
+    invoiceDocuments: order.invoiceDocuments || [],
+    invoiceCheckedAt: order.invoiceCheckedAt || null,
+    invoiceCheckError: order.invoiceCheckError || null,
+    buyer: {
+      id: null,
+      nickname: null,
+      name: order.customer || 'Sin datos',
+      documentType: order.documentType || 'Sin datos',
+      documentNumber: String(order.documentNumber || 'Sin datos'),
+      phone: null,
+      email: null,
+    },
+    address: null,
+    billingAddress: null,
+    items: order.items || [],
+    amounts: {
+      total: Number(order.total || 0),
+      paid: Number(order.total || 0),
+      shippingCost: 0,
+      marketplaceFees: 0,
+      taxes: 0,
+      netAmount: Number(order.total || 0),
+    },
+    payments: [],
+    syncedAt: null,
+    partial: true,
+  }
+}
 
-  const safeOrderId = encodeURIComponent(String(orderId))
-  const order = await apiFetch(`/orders/${safeOrderId}`)
-
+async function fetchOrderDetailFromMercadoLibre(order, token) {
+  const safeOrderId = encodeURIComponent(String(order.id))
   let shipment = null
   let billingInfo = null
 
   if (order.shipping?.id) {
     try {
       shipment = await apiFetch(
-        `/shipments/${encodeURIComponent(String(order.shipping.id))}`
+        `/shipments/${encodeURIComponent(String(order.shipping.id))}`,
+        token,
+        { retries: 2 },
       )
-    } catch {
+    } catch (error) {
+      if (error?.status === 429) throw error
       shipment = null
     }
   }
 
-  // Se mantiene el endpoint actual para no romper el funcionamiento existente.
-  // Más adelante conviene migrarlo al nuevo flujo de billing_info v2.
   try {
-    billingInfo = await apiFetch(`/orders/${safeOrderId}/billing_info`)
-  } catch {
+    billingInfo = await apiFetch(`/orders/${safeOrderId}/billing_info`, token, { retries: 2 })
+  } catch (error) {
+    if (error?.status === 429) throw error
     billingInfo = null
   }
 
-  const fiscalInfo = await readFiscalDocumentsForOrder(order)
+  const fiscalInfo = await readFiscalDocumentsForOrder(order, token)
+  const detail = buildOrderDetail(order, shipment, billingInfo, fiscalInfo)
+  detail.syncedAt = new Date().toISOString()
+  detail.partial = false
+  return { detail, fiscalInfo }
+}
+
+async function setSyncStatus(patch, { persist = false } = {}) {
+  const base = runtimeSyncStatus || {
+    running: false,
+    phase: 'idle',
+    processed: 0,
+    total: 0,
+    message: '',
+    startedAt: null,
+    finishedAt: null,
+    error: null,
+  }
+
+  runtimeSyncStatus = { ...base, ...patch }
+
+  if (persist) {
+    await updateStore((store) => ({ ...store, syncStatus: runtimeSyncStatus }))
+  }
+
+  return runtimeSyncStatus
+}
+
+async function runFullSync() {
+  const initialStore = await readStore()
+  if (!initialStore.account?.id) throw new Error('Mercado Libre no está conectado')
+
+  const token = await getAccessToken()
+  const sellerId = String(initialStore.account.id)
+  const previousOrders = new Map((initialStore.orders || []).map((order) => [String(order.id), order]))
+  const previousDetails = initialStore.details || {}
+  const rawOrders = []
+
+  await setSyncStatus({
+    running: true,
+    phase: 'orders',
+    processed: 0,
+    total: 0,
+    message: 'Descargando listado de ventas…',
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    error: null,
+  }, { persist: true })
+
+  let offset = 0
+  let total = null
+
+  while (total === null || offset < total) {
+    const query = new URLSearchParams({
+      seller: sellerId,
+      sort: 'date_desc',
+      limit: String(SYNC_PAGE_SIZE),
+      offset: String(offset),
+    })
+
+    const result = await apiFetch(`/orders/search?${query.toString()}`, token, { retries: 4 })
+    const batch = Array.isArray(result.results) ? result.results : []
+    total = Number(result.paging?.total ?? batch.length)
+    rawOrders.push(...batch)
+    offset += batch.length
+
+    await setSyncStatus({
+      running: true,
+      phase: 'orders',
+      processed: Math.min(offset, total),
+      total,
+      message: `Descargando ventas ${Math.min(offset, total)} / ${total}…`,
+    })
+
+    if (!batch.length) break
+    await sleep(250)
+  }
+
+  const normalizedOrders = rawOrders.map((order) => {
+    const previous = previousOrders.get(String(order.id)) || {}
+    const previousDetail = previousDetails[String(order.id)]
+    const fiscalInfo = previousDetail
+      ? {
+          packId: previousDetail.packId || previous.packId,
+          invoiceAttached: previousDetail.invoiceAttached || previous.invoiceAttached,
+          invoiceDocuments: previousDetail.invoiceDocuments || previous.invoiceDocuments || [],
+          invoiceCheckedAt: previousDetail.invoiceCheckedAt || previous.invoiceCheckedAt,
+          invoiceCheckError: previousDetail.invoiceCheckError || previous.invoiceCheckError,
+        }
+      : previous
+    const normalized = normalizeOrder(order, fiscalInfo)
+    if (previousDetail?.buyer) {
+      normalized.customer = previousDetail.buyer.name || normalized.customer
+      normalized.documentType = previousDetail.buyer.documentType || normalized.documentType
+      normalized.documentNumber = previousDetail.buyer.documentNumber || normalized.documentNumber
+    }
+    return normalized
+  })
+
+  await updateStore((store) => ({
+    ...store,
+    orders: normalizedOrders,
+    details: store.details || {},
+    pagination: {
+      page: 1,
+      pageSize: 50,
+      total: normalizedOrders.length,
+      totalPages: Math.max(1, Math.ceil(normalizedOrders.length / 50)),
+      offset: 0,
+    },
+  }))
+
+  await setSyncStatus({
+    running: true,
+    phase: 'details',
+    processed: 0,
+    total: rawOrders.length,
+    message: `Completando datos 0 / ${rawOrders.length}…`,
+  })
+
+  let currentStore = await readStore()
+  let details = { ...(currentStore.details || {}) }
+  let ordersById = new Map((currentStore.orders || []).map((order) => [String(order.id), order]))
+
+  for (let index = 0; index < rawOrders.length; index += 1) {
+    const order = rawOrders[index]
+    const id = String(order.id)
+    const cached = details[id]
+
+    if (!detailCacheIsFresh(cached)) {
+      try {
+        const enriched = await fetchOrderDetailFromMercadoLibre(order, token)
+        details[id] = enriched.detail
+        const normalized = normalizeOrder(order, enriched.fiscalInfo)
+        normalized.customer = enriched.detail.buyer?.name || normalized.customer
+        normalized.documentType = enriched.detail.buyer?.documentType || normalized.documentType
+        normalized.documentNumber = enriched.detail.buyer?.documentNumber || normalized.documentNumber
+        ordersById.set(id, normalized)
+      } catch (error) {
+        if (error?.status === 429) {
+          await setSyncStatus({
+            running: true,
+            phase: 'waiting',
+            processed: index,
+            total: rawOrders.length,
+            message: 'Mercado Libre pidió una pausa. Panadero espera y continúa automáticamente…',
+          })
+          await sleep(12_000)
+          index -= 1
+          continue
+        }
+
+        if (!details[id]) {
+          details[id] = {
+            ...detailFromStoredOrder(ordersById.get(id)),
+            syncError: error.message,
+          }
+        }
+      }
+    }
+
+    if ((index + 1) % 10 === 0 || index === rawOrders.length - 1) {
+      await updateStore((store) => ({
+        ...store,
+        orders: Array.from(ordersById.values()),
+        details,
+        syncStatus: runtimeSyncStatus,
+      }))
+    }
+
+    await setSyncStatus({
+      running: true,
+      phase: 'details',
+      processed: index + 1,
+      total: rawOrders.length,
+      message: `Completando datos ${index + 1} / ${rawOrders.length}…`,
+    })
+
+    await sleep(SYNC_DETAIL_DELAY_MS)
+  }
+
+  const lastSyncAt = new Date().toISOString()
+  await updateStore((store) => ({
+    ...store,
+    orders: Array.from(ordersById.values()),
+    details,
+    lastSyncAt,
+    pagination: {
+      page: 1,
+      pageSize: 50,
+      total: ordersById.size,
+      totalPages: Math.max(1, Math.ceil(ordersById.size / 50)),
+      offset: 0,
+    },
+  }))
+
+  await setSyncStatus({
+    running: false,
+    phase: 'done',
+    processed: rawOrders.length,
+    total: rawOrders.length,
+    message: `Sincronización completa: ${rawOrders.length} ventas guardadas.`,
+    finishedAt: lastSyncAt,
+    error: null,
+  }, { persist: true })
+}
+
+export async function startFullSync() {
+  const store = await readStore()
+  if (!store.account?.id) throw new Error('Mercado Libre no está conectado')
+
+  if (syncPromise) return getSyncStatus()
+
+  syncPromise = runFullSync()
+    .catch(async (error) => {
+      console.error('Mercado Libre full sync error:', error)
+      await setSyncStatus({
+        running: false,
+        phase: 'error',
+        message: error.message,
+        error: error.message,
+        finishedAt: new Date().toISOString(),
+      }, { persist: true })
+    })
+    .finally(() => {
+      syncPromise = null
+    })
+
+  await sleep(50)
+  return getSyncStatus()
+}
+
+export async function getSyncStatus() {
+  const store = await readStore()
+  const status = runtimeSyncStatus || store.syncStatus || {}
+  return {
+    running: Boolean(status.running),
+    phase: status.phase || 'idle',
+    processed: Number(status.processed || 0),
+    total: Number(status.total || store.orders?.length || 0),
+    message: status.message || '',
+    startedAt: status.startedAt || null,
+    finishedAt: status.finishedAt || null,
+    error: status.error || null,
+    lastSyncAt: store.lastSyncAt || null,
+  }
+}
+
+export async function getFiscalDocuments(orderId) {
+  if (!orderId) throw new Error('Falta el ID de la venta')
+  const store = await readStore()
+  const detail = store.details?.[String(orderId)]
+  if (detail) {
+    return {
+      packId: detail.packId || null,
+      invoiceAttached: Boolean(detail.invoiceAttached),
+      invoiceDocuments: detail.invoiceDocuments || [],
+      invoiceCheckedAt: detail.invoiceCheckedAt || null,
+      invoiceCheckError: detail.invoiceCheckError || null,
+    }
+  }
+
+  const order = (store.orders || []).find((item) => String(item.id) === String(orderId))
+  if (!order) throw new Error('La venta todavía no fue sincronizada.')
+  return {
+    packId: order.packId || null,
+    invoiceAttached: Boolean(order.invoiceAttached),
+    invoiceDocuments: order.invoiceDocuments || [],
+    invoiceCheckedAt: order.invoiceCheckedAt || null,
+    invoiceCheckError: order.invoiceCheckError || null,
+  }
+}
+
+export async function getOrderDetail(orderId) {
+  if (!orderId) throw new Error('Falta el ID de la venta')
+
+  const store = await readStore()
+  const id = String(orderId)
+  const detail = store.details?.[id]
+  if (detail) return { detail, cached: true }
+
+  const order = (store.orders || []).find((item) => String(item.id) === id)
+  if (!order) throw new Error('La venta todavía no fue sincronizada.')
 
   return {
-    detail: buildOrderDetail(order, shipment, billingInfo, fiscalInfo),
-    raw: {
-      order,
-      shipment,
-      billingInfo,
-      fiscalInfo,
-    },
+    detail: detailFromStoredOrder(order),
+    cached: true,
+    partial: true,
   }
 }
 
@@ -599,102 +916,62 @@ export async function getStatus() {
     connected: Boolean(store.account && store.tokens?.accessToken),
     account: store.account,
     orderCount: store.orders?.length || 0,
+    syncStatus: store.syncStatus || null,
+    lastSyncAt: store.lastSyncAt || null,
   }
 }
 
-export async function syncOrders({ page = 1, pageSize = 50 } = {}) {
+export async function syncOrders() {
+  // Compatibilidad con la ruta anterior: ahora inicia una sincronización total en segundo plano.
+  return startFullSync()
+}
+
+export async function getOrders({ page = 1, pageSize = 50, query = '', status = 'all' } = {}) {
   const store = await readStore()
+  const allOrders = Array.isArray(store.orders) ? store.orders : []
+  const normalizedQuery = String(query || '').trim().toLowerCase()
+  const normalizedStatus = String(status || 'all')
 
-  if (!store.account?.id) {
-    throw new Error('Mercado Libre no está conectado')
-  }
+  const filtered = allOrders.filter((order) => {
+    const matchesStatus = normalizedStatus === 'all' || order.status === normalizedStatus
+    if (!matchesStatus) return false
+    if (!normalizedQuery) return true
 
-  const safePage = Math.max(
-    1,
-    Number.parseInt(page, 10) || 1
-  )
-
-  const safePageSize = Math.min(
-    50,
-    Math.max(1, Number.parseInt(pageSize, 10) || 50)
-  )
-
-  const offset = (safePage - 1) * safePageSize
-
-  const query = new URLSearchParams({
-    seller: String(store.account.id),
-    sort: 'date_desc',
-    limit: String(safePageSize),
-    offset: String(offset),
+    return [
+      order.customer,
+      order.id,
+      order.documentType,
+      order.documentNumber,
+      ...(order.items || []).map((item) => item.title),
+    ].some((value) => String(value || '').toLowerCase().includes(normalizedQuery))
   })
 
-  const result = await apiFetch(`/orders/search?${query.toString()}`)
-  const rawOrders = Array.isArray(result.results) ? result.results : []
-  const token = await getAccessToken()
-
-  // Consulta las facturas en grupos de 5 para evitar sobrecargar la API.
-  const fiscalInformation = await mapWithConcurrency(
-    rawOrders,
-    INVOICE_CHECK_CONCURRENCY,
-    (order) => readFiscalDocumentsForOrder(order, token)
-  )
-
-  const orders = rawOrders.map(
-    (order, index) => normalizeOrder(order, fiscalInformation[index])
-  )
-
-  const total = Number(result.paging?.total ?? orders.length)
+  const safePageSize = Math.min(100, Math.max(1, Number.parseInt(pageSize, 10) || 50))
+  const total = filtered.length
   const totalPages = Math.max(1, Math.ceil(total / safePageSize))
-  const lastSyncAt = new Date().toISOString()
+  const safePage = Math.min(totalPages, Math.max(1, Number.parseInt(page, 10) || 1))
+  const offset = (safePage - 1) * safePageSize
+  const orders = filtered.slice(offset, offset + safePageSize)
 
-  const pagination = {
+  const summary = allOrders.reduce((acc, order) => {
+    acc.all += 1
+    if (order.status === 'ready') acc.ready += 1
+    if (order.status === 'invoiced') acc.invoiced += 1
+    if (order.status === 'review') acc.review += 1
+    return acc
+  }, { all: 0, ready: 0, invoiced: 0, review: 0 })
+
+  return {
+    orders,
     page: safePage,
     pageSize: safePageSize,
     total,
     totalPages,
     offset,
-  }
-
-  await updateStore((current) => ({
-    ...current,
-    orders,
-    pagination,
-    lastSyncAt,
-  }))
-
-  const invoiceSummary = orders.reduce(
-    (summary, order) => {
-      if (order.invoiceAttached) summary.invoiced += 1
-      if (order.invoiceCheckError) summary.errors += 1
-      return summary
-    },
-    { invoiced: 0, errors: 0 }
-  )
-
-  return {
-    orders,
-    ...pagination,
-    lastSyncAt,
-    invoiceSummary,
-  }
-}
-
-export async function getOrders() {
-  const store = await readStore()
-  const orders = store.orders || []
-
-  const pagination = store.pagination || {
-    page: 1,
-    pageSize: 50,
-    total: orders.length,
-    totalPages: Math.max(1, Math.ceil(orders.length / 50)),
-    offset: 0,
-  }
-
-  return {
-    orders,
-    ...pagination,
+    summary,
+    allTotal: allOrders.length,
     lastSyncAt: store.lastSyncAt || null,
+    syncStatus: store.syncStatus || null,
   }
 }
 
@@ -704,5 +981,8 @@ export async function disconnect() {
     account: null,
     tokens: null,
     orders: [],
+    details: {},
+    syncStatus: null,
   }))
 }
+
