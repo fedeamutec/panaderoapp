@@ -81,7 +81,6 @@ function Home() {
   const [account, setAccount] = useState({ connected: false, nickname: '' })
   const [sales, setSales] = useState(demoSales)
   const [loading, setLoading] = useState(false)
-  const [syncing, setSyncing] = useState(false)
   const [notice, setNotice] = useState('')
   const [activeFilter, setActiveFilter] = useState(() =>
     localStorage.getItem('panadero-active-filter') || 'all',
@@ -97,7 +96,6 @@ function Home() {
   const [pageSize] = useState(50)
   const [totalSales, setTotalSales] = useState(0)
   const [totalPages, setTotalPages] = useState(1)
-  const [summaryCounts, setSummaryCounts] = useState({ all: 0, ready: 0, invoiced: 0, review: 0 })
   const [invoiceTypes, setInvoiceTypes] = useState(() => {
     try { return JSON.parse(localStorage.getItem('panadero-invoice-types') || '{}') } catch { return {} }
   })
@@ -121,7 +119,7 @@ function Home() {
 
       if (status.connected) {
         const [orderPayload, invoicePayload] = await Promise.all([
-          api(`/mercadolibre/orders?page=1&pageSize=${pageSize}`),
+          api('/mercadolibre/orders'),
           api('/arca/sale-invoices').catch(() => ({ invoices: [] })),
         ])
 
@@ -136,10 +134,9 @@ function Home() {
           setSelectedSaleId(orderPayload.orders[0]?.id || '')
         }
         setPage(Number(orderPayload.page || 1))
-        setTotalSales(Number(orderPayload.allTotal || orderPayload.total || orderPayload.orders?.length || 0))
+        setTotalSales(Number(orderPayload.total || orderPayload.orders?.length || 0))
         setTotalPages(Number(orderPayload.totalPages || 1))
-        setSummaryCounts(orderPayload.summary || { all: 0, ready: 0, invoiced: 0, review: 0 })
-        localStorage.setItem('panadero-total-sales', String(orderPayload.allTotal || orderPayload.total || orderPayload.orders?.length || 0))
+        localStorage.setItem('panadero-total-sales', String(orderPayload.total || orderPayload.orders?.length || 0))
       }
     } catch {
       setNotice('No se pudo conectar con Panadero API.')
@@ -169,14 +166,6 @@ function Home() {
   useEffect(() => {
     localStorage.setItem('panadero-invoice-types', JSON.stringify(invoiceTypes))
   }, [invoiceTypes])
-
-  useEffect(() => {
-    if (!account.connected) return undefined
-    const timer = window.setTimeout(() => {
-      loadPage(1, { search: query, filter: activeFilter })
-    }, 280)
-    return () => window.clearTimeout(timer)
-  }, [account.connected, activeFilter, query]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     let cancelled = false
@@ -227,14 +216,15 @@ function Home() {
   const selectedSale =
     sales.find((sale) => String(sale.id) === String(selectedSaleId)) || visibleSales[0]
 
-  const summary = summaryCounts.all > 0
-    ? summaryCounts
-    : {
-        all: sales.length,
-        ready: sales.filter((sale) => sale.status === 'ready').length,
-        invoiced: sales.filter((sale) => sale.status === 'invoiced').length,
-        review: sales.filter((sale) => sale.status === 'review').length,
-      }
+  const summary = useMemo(
+    () => ({
+      all: sales.length,
+      ready: sales.filter((sale) => sale.status === 'ready').length,
+      invoiced: sales.filter((sale) => sale.status === 'invoiced').length,
+      review: sales.filter((sale) => sale.status === 'review').length,
+    }),
+    [sales],
+  )
 
   const financials = useMemo(() => {
     const detail = orderDetail
@@ -284,49 +274,28 @@ function Home() {
     }
   }
 
-  const loadPage = useCallback(async (targetPage, { showNotice = false, search = query, filter = activeFilter } = {}) => {
+  const loadPage = async (targetPage, showNotice = false) => {
     setLoading(true)
-    if (!showNotice) setNotice('')
+    setNotice('')
     try {
-      const params = new URLSearchParams({
-        page: String(targetPage),
-        pageSize: String(pageSize),
-        query: String(search || ''),
-        status: String(filter || 'all'),
-      })
-      const result = await api(`/mercadolibre/orders?${params.toString()}`)
-      setSales((result.orders || []).map((sale) => normalizeSaleStatus(sale, saleInvoices)))
+      const result = await api(`/mercadolibre/sync?page=${targetPage}&pageSize=${pageSize}`, { method: 'POST' })
+      setSales(
+        (result.orders || []).map((sale) => normalizeSaleStatus(sale, saleInvoices)),
+      )
       setPage(Number(result.page || targetPage))
-      setTotalSales(Number(result.allTotal || result.total || 0))
+      setTotalSales(Number(result.total || 0))
       setTotalPages(Number(result.totalPages || 1))
-      setSummaryCounts(result.summary || { all: 0, ready: 0, invoiced: 0, review: 0 })
-      if (!result.orders?.some((sale) => String(sale.id) === String(selectedSaleId))) {
-        setSelectedSaleId(result.orders?.[0]?.id || '')
-      }
-      localStorage.setItem('panadero-total-sales', String(result.allTotal || result.total || 0))
-      if (showNotice) setNotice(`Página ${result.page || targetPage} cargada desde Panadero.`)
+      setSelectedSaleId(result.orders?.[0]?.id || '')
+      localStorage.setItem('panadero-total-sales', String(result.total || 0))
+      if (showNotice) setNotice(`Página ${result.page || targetPage} actualizada: ${result.orders?.length || 0} ventas.`)
     } catch (error) {
       setNotice(error.message)
     } finally {
       setLoading(false)
     }
-  }, [activeFilter, pageSize, query, saleInvoices, selectedSaleId])
-
-  const handleSync = async () => {
-    if (syncing) return
-    setSyncing(true)
-    setNotice('Sincronizando Mercado Libre…')
-    try {
-      const result = await api('/mercadolibre/sync', { method: 'POST' })
-      await loadPage(1)
-      setNotice(result.message || `Sincronización completa: ${result.total || 0} ventas.`)
-    } catch (error) {
-      setNotice(error.message)
-    } finally {
-      setSyncing(false)
-    }
   }
 
+  const handleSync = () => loadPage(page, true)
   const handlePageChange = (targetPage) => {
     if (targetPage < 1 || targetPage > totalPages || targetPage === page || loading) return
     loadPage(targetPage)
@@ -484,7 +453,7 @@ function Home() {
     <main className="workspace">
       <Topbar
         account={account}
-        loading={loading || syncing}
+        loading={loading}
         onSync={handleSync}
         onConnect={handleConnect}
         onDisconnect={handleDisconnect}
@@ -580,7 +549,7 @@ function Home() {
               {detailLoading && (
                 <div className="detail-loading">
                   <span className="detail-spinner" />
-                  Cargando datos sincronizados…
+                  Consultando datos completos en Mercado Libre…
                 </div>
               )}
 

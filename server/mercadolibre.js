@@ -4,6 +4,7 @@ import { readStore, updateStore } from './store.js'
 const AUTH_URL = 'https://auth.mercadolibre.com.ar/authorization'
 const TOKEN_URL = 'https://api.mercadolibre.com/oauth/token'
 const API_URL = 'https://api.mercadolibre.com'
+const INVOICE_CHECK_CONCURRENCY = 5
 
 function config() {
   const clientId = process.env.ML_CLIENT_ID
@@ -141,45 +142,24 @@ async function getAccessToken() {
   return refreshAccessToken(store.tokens.refreshToken)
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-function mercadoLibreError(payload, status) {
-  const error = new Error(
-    payload?.message
-    || payload?.error
-    || `Error de Mercado Libre (${status})`
-  )
-  error.status = status
-  return error
-}
-
-async function apiFetch(pathname, suppliedToken, { retries = 3 } = {}) {
+async function apiFetch(pathname, suppliedToken) {
   const token = suppliedToken || await getAccessToken()
 
-  for (let attempt = 0; attempt <= retries; attempt += 1) {
-    const response = await fetch(`${API_URL}${pathname}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
+  const response = await fetch(`${API_URL}${pathname}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
 
-    const payload = await response.json().catch(() => ({}))
+  const payload = await response.json().catch(() => ({}))
 
-    if (response.ok) return payload
-
-    if (response.status === 429 && attempt < retries) {
-      const retryAfterHeader = Number(response.headers.get('retry-after'))
-      const retryAfterMs = Number.isFinite(retryAfterHeader) && retryAfterHeader > 0
-        ? retryAfterHeader * 1000
-        : Math.min(15_000, 1_500 * (2 ** attempt))
-      await sleep(retryAfterMs)
-      continue
-    }
-
-    throw mercadoLibreError(payload, response.status)
+  if (!response.ok) {
+    throw new Error(
+      payload.message
+      || payload.error
+      || `Error de Mercado Libre (${response.status})`
+    )
   }
 
-  throw new Error('Mercado Libre no respondió después de varios intentos.')
+  return payload
 }
 
 function fiscalDocumentReference(order = {}) {
@@ -209,10 +189,6 @@ async function readFiscalDocumentsForOrder(order, suppliedToken) {
     })
 
     const payload = await response.json().catch(() => ({}))
-
-    if (response.status === 429) {
-      throw mercadoLibreError(payload, 429)
-    }
 
     // Mercado Libre responde 404 cuando el pack no tiene factura cargada.
     if (response.status === 404) {
@@ -255,7 +231,6 @@ async function readFiscalDocumentsForOrder(order, suppliedToken) {
       invoiceCheckError: null,
     }
   } catch (error) {
-    if (error?.status === 429) throw error
     return {
       packId,
       invoiceAttached: false,
@@ -264,6 +239,30 @@ async function readFiscalDocumentsForOrder(order, suppliedToken) {
       invoiceCheckError: error.message,
     }
   }
+}
+
+async function mapWithConcurrency(values, concurrency, mapper) {
+  const results = new Array(values.length)
+  let nextIndex = 0
+
+  async function worker() {
+    while (nextIndex < values.length) {
+      const currentIndex = nextIndex
+      nextIndex += 1
+      results[currentIndex] = await mapper(values[currentIndex], currentIndex)
+    }
+  }
+
+  const workerCount = Math.min(
+    Math.max(1, Number(concurrency) || 1),
+    values.length || 1
+  )
+
+  await Promise.all(
+    Array.from({ length: workerCount }, () => worker())
+  )
+
+  return results
 }
 
 function normalizeOrder(order, fiscalInfo = {}) {
@@ -285,8 +284,8 @@ function normalizeOrder(order, fiscalInfo = {}) {
     packId: fiscalInfo.packId || fiscalDocumentReference(order) || null,
     accountId: 'mercadolibre',
     customer,
-    documentType: '',
-    documentNumber: '',
+    documentType: 'Sin datos',
+    documentNumber: String(order.buyer?.id || 'Pendiente'),
     total: Number(order.total_amount || order.paid_amount || 0),
 
     // La factura informada por Mercado Libre tiene prioridad sobre el estado de pago.
@@ -545,147 +544,51 @@ export async function uploadFiscalDocument(orderId, pdfBuffer, filename = 'factu
   }
 }
 
-const SYNC_PAGE_SIZE = 50
-const RECENT_DETAIL_COUNT = 50
-const RECENT_DETAIL_CONCURRENCY = 2
-const RECENT_DETAIL_DELAY_MS = 350
+export async function getFiscalDocuments(orderId) {
+  if (!orderId) throw new Error('Falta el ID de la venta')
 
-function detailFromStoredOrder(order = {}) {
-  return {
-    id: String(order.id || ''),
-    packId: order.packId || null,
-    status: order.marketplaceStatus || '',
-    dateCreated: order.dateCreated || null,
-    invoiceAttached: Boolean(order.invoiceAttached),
-    invoiceSource: order.invoiceSource || null,
-    invoiceDocuments: order.invoiceDocuments || [],
-    invoiceCheckedAt: order.invoiceCheckedAt || null,
-    invoiceCheckError: order.invoiceCheckError || null,
-    buyer: {
-      id: null,
-      nickname: null,
-      name: order.customer || 'Sin datos',
-      documentType: order.documentType || '',
-      documentNumber: String(order.documentNumber || ''),
-      phone: null,
-      email: null,
-    },
-    address: null,
-    billingAddress: null,
-    items: order.items || [],
-    amounts: {
-      total: Number(order.total || 0),
-      paid: Number(order.total || 0),
-      shippingCost: 0,
-      marketplaceFees: 0,
-      taxes: 0,
-      netAmount: Number(order.total || 0),
-    },
-    payments: [],
-    syncedAt: null,
-    partial: true,
-  }
+  const safeOrderId = encodeURIComponent(String(orderId))
+  const order = await apiFetch(`/orders/${safeOrderId}`)
+  return readFiscalDocumentsForOrder(order)
 }
 
-async function fetchOrderDetailFromMercadoLibre(order, token) {
-  const safeOrderId = encodeURIComponent(String(order.id))
+export async function getOrderDetail(orderId) {
+  if (!orderId) throw new Error('Falta el ID de la venta')
+
+  const safeOrderId = encodeURIComponent(String(orderId))
+  const order = await apiFetch(`/orders/${safeOrderId}`)
+
   let shipment = null
   let billingInfo = null
 
   if (order.shipping?.id) {
     try {
       shipment = await apiFetch(
-        `/shipments/${encodeURIComponent(String(order.shipping.id))}`,
-        token,
-        { retries: 1 },
+        `/shipments/${encodeURIComponent(String(order.shipping.id))}`
       )
-    } catch (error) {
-      if (error?.status === 429) throw error
+    } catch {
       shipment = null
     }
   }
 
+  // Se mantiene el endpoint actual para no romper el funcionamiento existente.
+  // Más adelante conviene migrarlo al nuevo flujo de billing_info v2.
   try {
-    billingInfo = await apiFetch(`/orders/${safeOrderId}/billing_info`, token, { retries: 1 })
-  } catch (error) {
-    if (error?.status === 429) throw error
+    billingInfo = await apiFetch(`/orders/${safeOrderId}/billing_info`)
+  } catch {
     billingInfo = null
   }
 
-  let fiscalInfo = {}
-  try {
-    fiscalInfo = await readFiscalDocumentsForOrder(order, token)
-  } catch (error) {
-    if (error?.status === 429) throw error
-    fiscalInfo = {}
-  }
-
-  const detail = buildOrderDetail(order, shipment, billingInfo, fiscalInfo)
-  detail.syncedAt = new Date().toISOString()
-  detail.partial = false
-  return { detail, fiscalInfo }
-}
-
-async function mapRecentWithConcurrency(values, concurrency, mapper) {
-  const results = new Array(values.length)
-  let cursor = 0
-  let stoppedByRateLimit = false
-
-  async function worker() {
-    while (cursor < values.length && !stoppedByRateLimit) {
-      const index = cursor
-      cursor += 1
-      try {
-        results[index] = await mapper(values[index], index)
-      } catch (error) {
-        if (error?.status === 429) {
-          stoppedByRateLimit = true
-          results[index] = { rateLimited: true, error }
-          return
-        }
-        results[index] = { error }
-      }
-      await sleep(RECENT_DETAIL_DELAY_MS)
-    }
-  }
-
-  await Promise.all(Array.from({ length: Math.min(concurrency, values.length || 1) }, () => worker()))
-  return { results, rateLimited: stoppedByRateLimit }
-}
-
-export async function getFiscalDocuments(orderId) {
-  if (!orderId) throw new Error('Falta el ID de la venta')
-  const store = await readStore()
-  const id = String(orderId)
-  const detail = store.details?.[id]
-  const order = (store.orders || []).find((item) => String(item.id) === id)
-
-  if (!detail && !order) throw new Error('La venta todavía no fue sincronizada.')
+  const fiscalInfo = await readFiscalDocumentsForOrder(order)
 
   return {
-    packId: detail?.packId || order?.packId || null,
-    invoiceAttached: Boolean(detail?.invoiceAttached || order?.invoiceAttached),
-    invoiceDocuments: detail?.invoiceDocuments || order?.invoiceDocuments || [],
-    invoiceCheckedAt: detail?.invoiceCheckedAt || order?.invoiceCheckedAt || null,
-    invoiceCheckError: detail?.invoiceCheckError || order?.invoiceCheckError || null,
-  }
-}
-
-export async function getOrderDetail(orderId) {
-  if (!orderId) throw new Error('Falta el ID de la venta')
-
-  const store = await readStore()
-  const id = String(orderId)
-  const detail = store.details?.[id]
-  if (detail) return { detail, cached: true }
-
-  const order = (store.orders || []).find((item) => String(item.id) === id)
-  if (!order) throw new Error('La venta todavía no fue sincronizada.')
-
-  return {
-    detail: detailFromStoredOrder(order),
-    cached: true,
-    partial: true,
+    detail: buildOrderDetail(order, shipment, billingInfo, fiscalInfo),
+    raw: {
+      order,
+      shipment,
+      billingInfo,
+      fiscalInfo,
+    },
   }
 }
 
@@ -696,171 +599,101 @@ export async function getStatus() {
     connected: Boolean(store.account && store.tokens?.accessToken),
     account: store.account,
     orderCount: store.orders?.length || 0,
-    lastSyncAt: store.lastSyncAt || null,
   }
 }
 
-// Sincronización diaria: descarga el índice COMPLETO de ventas con pocas llamadas
-// (50 por página) y solo completa datos fiscales/entrega para las 50 más recientes.
-// Navegar o abrir ventas después de esto NO vuelve a llamar a Mercado Libre.
-export async function syncOrders() {
-  const initialStore = await readStore()
-  if (!initialStore.account?.id) throw new Error('Mercado Libre no está conectado')
+export async function syncOrders({ page = 1, pageSize = 50 } = {}) {
+  const store = await readStore()
 
-  const token = await getAccessToken()
-  const sellerId = String(initialStore.account.id)
-  const previousOrders = new Map((initialStore.orders || []).map((order) => [String(order.id), order]))
-  const previousDetails = { ...(initialStore.details || {}) }
-  const rawOrders = []
-
-  let offset = 0
-  let expectedTotal = null
-
-  // Esta fase requiere ~28 requests para 1.378 ventas, no miles.
-  while (expectedTotal === null || offset < expectedTotal) {
-    const query = new URLSearchParams({
-      seller: sellerId,
-      sort: 'date_desc',
-      limit: String(SYNC_PAGE_SIZE),
-      offset: String(offset),
-    })
-
-    const result = await apiFetch(`/orders/search?${query.toString()}`, token, { retries: 2 })
-    const batch = Array.isArray(result.results) ? result.results : []
-    expectedTotal = Number(result.paging?.total ?? batch.length)
-    rawOrders.push(...batch)
-    if (!batch.length) break
-    offset += batch.length
-    await sleep(120)
+  if (!store.account?.id) {
+    throw new Error('Mercado Libre no está conectado')
   }
 
-  const rawById = new Map(rawOrders.map((order) => [String(order.id), order]))
-  const normalizedOrders = rawOrders.map((raw) => {
-    const id = String(raw.id)
-    const previous = previousOrders.get(id) || {}
-    const previousDetail = previousDetails[id]
-    const priorFiscal = {
-      packId: previousDetail?.packId || previous.packId || null,
-      invoiceAttached: Boolean(previousDetail?.invoiceAttached || previous.invoiceAttached),
-      invoiceDocuments: previousDetail?.invoiceDocuments || previous.invoiceDocuments || [],
-      invoiceCheckedAt: previousDetail?.invoiceCheckedAt || previous.invoiceCheckedAt || null,
-      invoiceCheckError: previousDetail?.invoiceCheckError || previous.invoiceCheckError || null,
-    }
-    const normalized = normalizeOrder(raw, priorFiscal)
-
-    // Conservamos CUIT/DNI y nombre real ya conocidos en sincronizaciones anteriores.
-    normalized.customer = previousDetail?.buyer?.name || previous.customer || normalized.customer
-    normalized.documentType = previousDetail?.buyer?.documentType || previous.documentType || ''
-    normalized.documentNumber = previousDetail?.buyer?.documentNumber || previous.documentNumber || ''
-    return normalized
-  })
-
-  const ordersById = new Map(normalizedOrders.map((order) => [String(order.id), order]))
-  const recentRaw = rawOrders.slice(0, RECENT_DETAIL_COUNT)
-
-  // Solo las operaciones del día / más recientes se enriquecen con CUIT-DNI,
-  // entrega y factura adjunta. Esto reproduce el volumen estable de 50 operaciones.
-  const enrichment = await mapRecentWithConcurrency(
-    recentRaw,
-    RECENT_DETAIL_CONCURRENCY,
-    async (raw) => {
-      const id = String(raw.id)
-      const enriched = await fetchOrderDetailFromMercadoLibre(raw, token)
-      previousDetails[id] = enriched.detail
-
-      const normalized = normalizeOrder(raw, enriched.fiscalInfo)
-      normalized.customer = enriched.detail.buyer?.name || normalized.customer
-      normalized.documentType = enriched.detail.buyer?.documentType || ''
-      normalized.documentNumber = enriched.detail.buyer?.documentNumber || ''
-      ordersById.set(id, normalized)
-      return id
-    },
+  const safePage = Math.max(
+    1,
+    Number.parseInt(page, 10) || 1
   )
 
-  const lastSyncAt = new Date().toISOString()
-  const finalOrders = Array.from(ordersById.values())
+  const safePageSize = Math.min(
+    50,
+    Math.max(1, Number.parseInt(pageSize, 10) || 50)
+  )
 
-  await updateStore((store) => ({
-    ...store,
-    orders: finalOrders,
-    details: previousDetails,
-    lastSyncAt,
-    pagination: {
-      page: 1,
-      pageSize: 50,
-      total: finalOrders.length,
-      totalPages: Math.max(1, Math.ceil(finalOrders.length / 50)),
-      offset: 0,
-    },
-  }))
+  const offset = (safePage - 1) * safePageSize
 
-  const invoiceSummary = finalOrders.reduce((summary, order) => {
-    if (order.invoiceAttached) summary.invoiced += 1
-    if (order.invoiceCheckError) summary.errors += 1
-    return summary
-  }, { invoiced: 0, errors: 0 })
-
-  return {
-    ok: true,
-    orders: finalOrders.slice(0, SYNC_PAGE_SIZE),
-    page: 1,
-    pageSize: SYNC_PAGE_SIZE,
-    total: finalOrders.length,
-    totalPages: Math.max(1, Math.ceil(finalOrders.length / SYNC_PAGE_SIZE)),
-    lastSyncAt,
-    invoiceSummary,
-    recentDetailsUpdated: RECENT_DETAIL_COUNT,
-    rateLimited: enrichment.rateLimited,
-    message: enrichment.rateLimited
-      ? 'Ventas sincronizadas. Mercado Libre limitó parte del detalle reciente; Panadero conservó los datos ya guardados.'
-      : `Sincronización completa: ${finalOrders.length} ventas. Se actualizaron los datos de las 50 más recientes.`,
-  }
-}
-
-export async function getOrders({ page = 1, pageSize = 50, query = '', status = 'all' } = {}) {
-  const store = await readStore()
-  const allOrders = Array.isArray(store.orders) ? store.orders : []
-  const normalizedQuery = String(query || '').trim().toLowerCase()
-  const normalizedStatus = String(status || 'all')
-
-  const filtered = allOrders.filter((order) => {
-    const matchesStatus = normalizedStatus === 'all' || order.status === normalizedStatus
-    if (!matchesStatus) return false
-    if (!normalizedQuery) return true
-
-    return [
-      order.customer,
-      order.id,
-      order.documentType,
-      order.documentNumber,
-      ...(order.items || []).map((item) => item.title),
-    ].some((value) => String(value || '').toLowerCase().includes(normalizedQuery))
+  const query = new URLSearchParams({
+    seller: String(store.account.id),
+    sort: 'date_desc',
+    limit: String(safePageSize),
+    offset: String(offset),
   })
 
-  const safePageSize = Math.min(100, Math.max(1, Number.parseInt(pageSize, 10) || 50))
-  const total = filtered.length
+  const result = await apiFetch(`/orders/search?${query.toString()}`)
+  const rawOrders = Array.isArray(result.results) ? result.results : []
+  const token = await getAccessToken()
+
+  // Consulta las facturas en grupos de 5 para evitar sobrecargar la API.
+  const fiscalInformation = await mapWithConcurrency(
+    rawOrders,
+    INVOICE_CHECK_CONCURRENCY,
+    (order) => readFiscalDocumentsForOrder(order, token)
+  )
+
+  const orders = rawOrders.map(
+    (order, index) => normalizeOrder(order, fiscalInformation[index])
+  )
+
+  const total = Number(result.paging?.total ?? orders.length)
   const totalPages = Math.max(1, Math.ceil(total / safePageSize))
-  const safePage = Math.min(totalPages, Math.max(1, Number.parseInt(page, 10) || 1))
-  const offset = (safePage - 1) * safePageSize
-  const orders = filtered.slice(offset, offset + safePageSize)
+  const lastSyncAt = new Date().toISOString()
 
-  const summary = allOrders.reduce((acc, order) => {
-    acc.all += 1
-    if (order.status === 'ready') acc.ready += 1
-    if (order.status === 'invoiced') acc.invoiced += 1
-    if (order.status === 'review') acc.review += 1
-    return acc
-  }, { all: 0, ready: 0, invoiced: 0, review: 0 })
-
-  return {
-    orders,
+  const pagination = {
     page: safePage,
     pageSize: safePageSize,
     total,
     totalPages,
     offset,
-    summary,
-    allTotal: allOrders.length,
+  }
+
+  await updateStore((current) => ({
+    ...current,
+    orders,
+    pagination,
+    lastSyncAt,
+  }))
+
+  const invoiceSummary = orders.reduce(
+    (summary, order) => {
+      if (order.invoiceAttached) summary.invoiced += 1
+      if (order.invoiceCheckError) summary.errors += 1
+      return summary
+    },
+    { invoiced: 0, errors: 0 }
+  )
+
+  return {
+    orders,
+    ...pagination,
+    lastSyncAt,
+    invoiceSummary,
+  }
+}
+
+export async function getOrders() {
+  const store = await readStore()
+  const orders = store.orders || []
+
+  const pagination = store.pagination || {
+    page: 1,
+    pageSize: 50,
+    total: orders.length,
+    totalPages: Math.max(1, Math.ceil(orders.length / 50)),
+    offset: 0,
+  }
+
+  return {
+    orders,
+    ...pagination,
     lastSyncAt: store.lastSyncAt || null,
   }
 }
@@ -871,8 +704,5 @@ export async function disconnect() {
     account: null,
     tokens: null,
     orders: [],
-    details: {},
-    syncStatus: null,
   }))
 }
-
