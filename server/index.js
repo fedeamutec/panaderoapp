@@ -481,7 +481,44 @@ app.get('/api/mercadolibre/orders', async (_req, res) => {
 })
 
 app.get('/api/mercadolibre/order/:id', async (req, res) => {
-  try { res.json(await getOrderDetail(req.params.id)) } catch (error) { res.status(500).json({ error: error.message }) }
+  try {
+    const payload = await getOrderDetail(req.params.id)
+    const detail = payload?.detail || null
+    const documentType = String(detail?.buyer?.documentType || '').trim().toUpperCase()
+    const documentNumber = String(detail?.buyer?.documentNumber || '').replace(/\D/g, '')
+
+    // Mercado Libre sigue siendo la fuente del CUIT/DNI y de ENTREGA.
+    // Si hay CUIT válido, ARCA completa únicamente los datos fiscales del receptor.
+    if (detail && documentType === 'CUIT' && documentNumber.length === 11) {
+      try {
+        const taxpayer = await getTaxpayerByCuit(documentNumber)
+        detail.fiscalBuyer = {
+          name: taxpayer.name,
+          documentType: 'CUIT',
+          documentNumber: taxpayer.cuit,
+          vatCondition: taxpayer.vatCondition || 'CUIT registrado en ARCA',
+          address: taxpayer.address || null,
+          source: taxpayer.source,
+          checkedAt: taxpayer.checkedAt,
+        }
+      } catch (arcaError) {
+        detail.fiscalBuyer = {
+          name: null,
+          documentType: 'CUIT',
+          documentNumber,
+          vatCondition: 'Pendiente de consultar',
+          address: null,
+          source: 'arca_error',
+          error: arcaError.message,
+        }
+      }
+    }
+
+    res.json(payload)
+  } catch (error) {
+    const status = Number(error?.status) === 429 ? 429 : 500
+    res.status(status).json({ error: error.message })
+  }
 })
 
 app.post('/api/mercadolibre/disconnect', async (_req, res) => {

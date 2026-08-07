@@ -84,6 +84,16 @@ function parseTaxpayer(responseXml, cuit) {
     throw new Error('ARCA Padrón respondió sin razón social o nombre del contribuyente.')
   }
 
+  const taxIds = [...String(personaReturn).matchAll(/<(?:\w+:)?idImpuesto(?:\s[^>]*)?>([^<]+)<\/(?:\w+:)?idImpuesto>/gi)]
+    .map((match) => Number(onlyDigits(match[1])))
+    .filter(Number.isFinite)
+
+  const vatCondition = taxIds.includes(30)
+    ? 'Responsable inscripto'
+    : taxIds.includes(20)
+      ? 'Monotributista'
+      : 'CUIT registrado en ARCA'
+
   return {
     cuit: onlyDigits(extractTag(general, 'idPersona') || cuit),
     name: displayName,
@@ -92,6 +102,8 @@ function parseTaxpayer(responseXml, cuit) {
     lastName: apellido || null,
     personType: normalizedText(extractTag(general, 'tipoPersona')) || null,
     keyStatus: normalizedText(extractTag(general, 'estadoClave')) || null,
+    taxIds,
+    vatCondition,
     address: {
       addressLine: normalizedText(extractTag(domicilio, 'direccion')) || null,
       city: normalizedText(extractTag(domicilio, 'localidad')) || null,

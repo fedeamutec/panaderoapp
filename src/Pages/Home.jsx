@@ -425,9 +425,12 @@ function Home() {
     }
   }
 
-  const detailName = orderDetail?.buyer?.name || selectedSale?.customer
-  const documentType = orderDetail?.buyer?.documentType || selectedSale?.documentType
-  const documentNumber = orderDetail?.buyer?.documentNumber || selectedSale?.documentNumber
+  const marketplaceBuyer = orderDetail?.buyer || {}
+  const fiscalBuyer = orderDetail?.fiscalBuyer || null
+  const detailName = fiscalBuyer?.name || marketplaceBuyer?.name || selectedSale?.customer
+  const documentType = marketplaceBuyer?.documentType || selectedSale?.documentType
+  const documentNumber = marketplaceBuyer?.documentNumber || selectedSale?.documentNumber
+  const fiscalAddress = fiscalBuyer?.address || null
   const detailItems = orderDetail?.items?.length ? orderDetail.items : selectedSale?.items || []
   const address = orderDetail?.address
   const primaryPayment = orderDetail?.payments?.[0]
@@ -562,11 +565,11 @@ function Home() {
               <div className="detail-block">
                 <div className="section-label">Cliente y facturación</div>
                 <div className="data-grid">
-                  <div><small>Nombre real</small><strong>{textOrDash(detailName)}</strong></div>
+                  <div><small>Razón social / Nombre fiscal</small><strong>{textOrDash(detailName)}</strong></div>
                   <div><small>{textOrDash(documentType)}</small><strong>{textOrDash(documentNumber)}</strong></div>
-                  <div><small>Teléfono</small><strong>{textOrDash(orderDetail?.buyer?.phone)}</strong></div>
-                  <div><small>Condición IVA</small><strong>{documentType === 'CUIT' ? 'Responsable inscripto' : documentType === 'DNI' ? 'Consumidor final' : 'Pendiente de consultar'}</strong></div>
-                  <div><small>Usuario ML</small><strong>{textOrDash(orderDetail?.buyer?.nickname)}</strong></div>
+                  <div><small>Condición IVA</small><strong>{textOrDash(fiscalBuyer?.vatCondition || (documentType === 'DNI' ? 'Consumidor final' : 'Pendiente de consultar'))}</strong></div>
+                  <div><small>Domicilio fiscal ARCA</small><strong>{textOrDash(fiscalAddress?.addressLine)}</strong></div>
+                  <div><small>Localidad fiscal</small><strong>{textOrDash([fiscalAddress?.city, fiscalAddress?.state].filter(Boolean).join(', '))}</strong></div>
                   <div><small>Cuenta vendedora</small><strong>{account.nickname || 'CR Argentina'}</strong></div>
                 </div>
               </div>
