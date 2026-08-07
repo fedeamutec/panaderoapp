@@ -315,11 +315,11 @@ function Home() {
   const handleSync = async () => {
     if (syncing) return
     setSyncing(true)
-    setNotice('Sincronizando las 50 ventas más recientes…')
+    setNotice('Sincronizando Mercado Libre…')
     try {
       const result = await api('/mercadolibre/sync', { method: 'POST' })
       await loadPage(1)
-      setNotice(result.message || 'Sincronización terminada.')
+      setNotice(result.message || `Sincronización completa: ${result.total || 0} ventas.`)
     } catch (error) {
       setNotice(error.message)
     } finally {
@@ -580,7 +580,7 @@ function Home() {
               {detailLoading && (
                 <div className="detail-loading">
                   <span className="detail-spinner" />
-                  Consultando datos completos en Mercado Libre…
+                  Cargando datos sincronizados…
                 </div>
               )}
 

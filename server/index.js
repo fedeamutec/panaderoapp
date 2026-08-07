@@ -10,7 +10,6 @@ import {
   getOrderDetail,
   getOrders,
   getStatus,
-  getSyncStatus,
   syncOrders,
   uploadFiscalDocument,
 } from './mercadolibre.js'
@@ -424,14 +423,10 @@ app.get('/api/mercadolibre/callback', async (req, res) => {
 
 app.post('/api/mercadolibre/sync', async (_req, res) => {
   try {
-    res.json(await syncOrders({ page: 1, pageSize: 50 }))
+    res.json(await syncOrders())
   } catch (error) {
     res.status(500).json({ error: error.message })
   }
-})
-
-app.get('/api/mercadolibre/sync-status', async (_req, res) => {
-  try { res.json(await getSyncStatus()) } catch (error) { res.status(500).json({ error: error.message }) }
 })
 
 app.get('/api/mercadolibre/orders', async (req, res) => {

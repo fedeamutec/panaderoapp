@@ -155,12 +155,12 @@ function mercadoLibreError(payload, status) {
   return error
 }
 
-async function apiFetch(pathname, suppliedToken, { retries = 3, headers = {} } = {}) {
+async function apiFetch(pathname, suppliedToken, { retries = 3 } = {}) {
   const token = suppliedToken || await getAccessToken()
 
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     const response = await fetch(`${API_URL}${pathname}`, {
-      headers: { Authorization: `Bearer ${token}`, ...headers },
+      headers: { Authorization: `Bearer ${token}` },
     })
 
     const payload = await response.json().catch(() => ({}))
@@ -285,8 +285,8 @@ function normalizeOrder(order, fiscalInfo = {}) {
     packId: fiscalInfo.packId || fiscalDocumentReference(order) || null,
     accountId: 'mercadolibre',
     customer,
-    documentType: 'Sin datos',
-    documentNumber: String(order.buyer?.id || 'Pendiente'),
+    documentType: '',
+    documentNumber: '',
     total: Number(order.total_amount || order.paid_amount || 0),
 
     // La factura informada por Mercado Libre tiene prioridad sobre el estado de pago.
@@ -324,55 +324,6 @@ function sumPaymentFees(payments) {
   }, 0)
 }
 
-function additionalBillingValue(additionalInfo, type) {
-  if (!Array.isArray(additionalInfo)) return null
-  const item = additionalInfo.find((entry) => String(entry?.type || '').toUpperCase() === type)
-  return item?.value ?? null
-}
-
-function normalizeBillingInfo(payload = {}) {
-  const root = payload?.buyer?.billing_info || payload?.billing_info || payload || {}
-  const additionalInfo = Array.isArray(root.additional_info)
-    ? root.additional_info
-    : Array.isArray(payload?.additional_info)
-      ? payload.additional_info
-      : []
-
-  const identification = root.identification || {}
-  const address = root.address || {}
-  const taxpayerType = root.taxes?.taxpayer_type || {}
-
-  const firstName = root.name || additionalBillingValue(additionalInfo, 'FIRST_NAME') || ''
-  const lastName = root.last_name || additionalBillingValue(additionalInfo, 'LAST_NAME') || ''
-  const legalName = root.business_name || additionalBillingValue(additionalInfo, 'BUSINESS_NAME') || ''
-
-  return {
-    name: legalName || [firstName, lastName].filter(Boolean).join(' ').trim(),
-    documentType:
-      identification.type
-      || root.doc_type
-      || additionalBillingValue(additionalInfo, 'DOC_TYPE')
-      || 'Sin datos',
-    documentNumber:
-      identification.number
-      || root.doc_number
-      || additionalBillingValue(additionalInfo, 'DOC_NUMBER')
-      || additionalBillingValue(additionalInfo, 'DOC_TYPE_NUMBER')
-      || 'Sin datos',
-    taxCondition: taxpayerType.description || null,
-    address: Object.keys(address).length
-      ? address
-      : {
-          street_name: additionalBillingValue(additionalInfo, 'STREET_NAME'),
-          street_number: additionalBillingValue(additionalInfo, 'STREET_NUMBER'),
-          city_name: additionalBillingValue(additionalInfo, 'CITY_NAME'),
-          zip_code: additionalBillingValue(additionalInfo, 'ZIP_CODE'),
-          state_name: additionalBillingValue(additionalInfo, 'STATE_NAME'),
-        },
-    raw: root,
-  }
-}
-
 function buildOrderDetail(order, shipment, billingInfo, fiscalInfo = {}) {
   const payments = Array.isArray(order.payments) ? order.payments : []
   const receiverAddress =
@@ -380,15 +331,27 @@ function buildOrderDetail(order, shipment, billingInfo, fiscalInfo = {}) {
     || order.shipping?.receiver_address
     || null
 
-  const normalizedBilling = normalizeBillingInfo(billingInfo)
-  const billingAddress = normalizedBilling.address || null
+  const billingAddress =
+    billingInfo?.billing_info?.additional_info
+    || billingInfo?.additional_info
+    || null
 
-  const buyerName =
-    normalizedBilling.name
-    || [order.buyer?.first_name, order.buyer?.last_name].filter(Boolean).join(' ').trim()
+  const buyerName = [
+    billingInfo?.billing_info?.name,
+    billingInfo?.name,
+    order.buyer?.first_name,
+    order.buyer?.last_name,
+  ].filter(Boolean).join(' ').trim()
 
-  const documentType = normalizedBilling.documentType || 'Sin datos'
-  const documentNumber = normalizedBilling.documentNumber || 'Sin datos'
+  const documentType =
+    billingInfo?.billing_info?.doc_type
+    || billingInfo?.doc_type
+    || 'Sin datos'
+
+  const documentNumber =
+    billingInfo?.billing_info?.doc_number
+    || billingInfo?.doc_number
+    || 'Sin datos'
 
   const phone =
     receiverAddress?.receiver_phone
@@ -444,7 +407,6 @@ function buildOrderDetail(order, shipment, billingInfo, fiscalInfo = {}) {
       documentNumber: String(documentNumber),
       phone,
       email: order.buyer?.email || null,
-      taxCondition: normalizedBilling.taxCondition || null,
     },
 
     address: receiverAddress
@@ -584,126 +546,128 @@ export async function uploadFiscalDocument(orderId, pdfBuffer, filename = 'factu
 }
 
 const SYNC_PAGE_SIZE = 50
-const DETAIL_SYNC_CONCURRENCY = 2
-const INVOICE_CHECK_CONCURRENCY = 5
-let runtimeSyncStatus = null
+const RECENT_DETAIL_COUNT = 50
+const RECENT_DETAIL_CONCURRENCY = 2
+const RECENT_DETAIL_DELAY_MS = 350
 
-async function mapWithConcurrency(values, concurrency, mapper) {
-  const results = new Array(values.length)
-  let nextIndex = 0
-
-  async function worker() {
-    while (nextIndex < values.length) {
-      const currentIndex = nextIndex
-      nextIndex += 1
-      results[currentIndex] = await mapper(values[currentIndex], currentIndex)
-    }
-  }
-
-  const workerCount = Math.min(
-    Math.max(1, Number(concurrency) || 1),
-    values.length || 1,
-  )
-
-  await Promise.all(Array.from({ length: workerCount }, () => worker()))
-  return results
-}
-
-async function fetchBillingInfoForOrder(order, token) {
-  const siteId = String(order.site_id || 'MLA')
-  const billingInfoId = order.buyer?.billing_info?.id
-
-  if (billingInfoId) {
-    try {
-      return await apiFetch(
-        `/orders/billing-info/${encodeURIComponent(siteId)}/${encodeURIComponent(String(billingInfoId))}`,
-        token,
-        { retries: 1, headers: { 'x-version': '2' } },
-      )
-    } catch (error) {
-      if (error?.status === 429) throw error
-    }
-  }
-
-  try {
-    return await apiFetch(
-      `/orders/${encodeURIComponent(String(order.id))}/billing_info`,
-      token,
-      { retries: 1, headers: { 'x-version': '2' } },
-    )
-  } catch (error) {
-    if (error?.status === 429) throw error
-    return null
+function detailFromStoredOrder(order = {}) {
+  return {
+    id: String(order.id || ''),
+    packId: order.packId || null,
+    status: order.marketplaceStatus || '',
+    dateCreated: order.dateCreated || null,
+    invoiceAttached: Boolean(order.invoiceAttached),
+    invoiceSource: order.invoiceSource || null,
+    invoiceDocuments: order.invoiceDocuments || [],
+    invoiceCheckedAt: order.invoiceCheckedAt || null,
+    invoiceCheckError: order.invoiceCheckError || null,
+    buyer: {
+      id: null,
+      nickname: null,
+      name: order.customer || 'Sin datos',
+      documentType: order.documentType || '',
+      documentNumber: String(order.documentNumber || ''),
+      phone: null,
+      email: null,
+    },
+    address: null,
+    billingAddress: null,
+    items: order.items || [],
+    amounts: {
+      total: Number(order.total || 0),
+      paid: Number(order.total || 0),
+      shippingCost: 0,
+      marketplaceFees: 0,
+      taxes: 0,
+      netAmount: Number(order.total || 0),
+    },
+    payments: [],
+    syncedAt: null,
+    partial: true,
   }
 }
 
-async function buildStoredDetail(order, token, fiscalInfo) {
+async function fetchOrderDetailFromMercadoLibre(order, token) {
+  const safeOrderId = encodeURIComponent(String(order.id))
   let shipment = null
   let billingInfo = null
 
-  try {
-    const tasks = []
-    if (order.shipping?.id) {
-      tasks.push(
-        apiFetch(
-          `/shipments/${encodeURIComponent(String(order.shipping.id))}`,
-          token,
-          { retries: 1 },
-        ).then((value) => { shipment = value }).catch((error) => {
-          if (error?.status === 429) throw error
-        }),
+  if (order.shipping?.id) {
+    try {
+      shipment = await apiFetch(
+        `/shipments/${encodeURIComponent(String(order.shipping.id))}`,
+        token,
+        { retries: 1 },
       )
+    } catch (error) {
+      if (error?.status === 429) throw error
+      shipment = null
     }
+  }
 
-    tasks.push(
-      fetchBillingInfoForOrder(order, token)
-        .then((value) => { billingInfo = value })
-        .catch((error) => {
-          if (error?.status === 429) throw error
-        }),
-    )
-
-    await Promise.all(tasks)
+  try {
+    billingInfo = await apiFetch(`/orders/${safeOrderId}/billing_info`, token, { retries: 1 })
   } catch (error) {
     if (error?.status === 429) throw error
+    billingInfo = null
+  }
+
+  let fiscalInfo = {}
+  try {
+    fiscalInfo = await readFiscalDocumentsForOrder(order, token)
+  } catch (error) {
+    if (error?.status === 429) throw error
+    fiscalInfo = {}
   }
 
   const detail = buildOrderDetail(order, shipment, billingInfo, fiscalInfo)
   detail.syncedAt = new Date().toISOString()
   detail.partial = false
-  return detail
+  return { detail, fiscalInfo }
 }
 
-function mergeRecentOrders(recentOrders, previousOrders) {
-  const recentIds = new Set(recentOrders.map((order) => String(order.id)))
-  return [
-    ...recentOrders,
-    ...(previousOrders || []).filter((order) => !recentIds.has(String(order.id))),
-  ]
+async function mapRecentWithConcurrency(values, concurrency, mapper) {
+  const results = new Array(values.length)
+  let cursor = 0
+  let stoppedByRateLimit = false
+
+  async function worker() {
+    while (cursor < values.length && !stoppedByRateLimit) {
+      const index = cursor
+      cursor += 1
+      try {
+        results[index] = await mapper(values[index], index)
+      } catch (error) {
+        if (error?.status === 429) {
+          stoppedByRateLimit = true
+          results[index] = { rateLimited: true, error }
+          return
+        }
+        results[index] = { error }
+      }
+      await sleep(RECENT_DETAIL_DELAY_MS)
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, values.length || 1) }, () => worker()))
+  return { results, rateLimited: stoppedByRateLimit }
 }
 
 export async function getFiscalDocuments(orderId) {
   if (!orderId) throw new Error('Falta el ID de la venta')
   const store = await readStore()
-  const detail = store.details?.[String(orderId)]
-  if (detail) {
-    return {
-      packId: detail.packId || null,
-      invoiceAttached: Boolean(detail.invoiceAttached),
-      invoiceDocuments: detail.invoiceDocuments || [],
-      invoiceCheckedAt: detail.invoiceCheckedAt || null,
-      invoiceCheckError: detail.invoiceCheckError || null,
-    }
-  }
+  const id = String(orderId)
+  const detail = store.details?.[id]
+  const order = (store.orders || []).find((item) => String(item.id) === id)
 
-  const order = (store.orders || []).find((item) => String(item.id) === String(orderId))
-  if (!order) throw new Error('La venta todavía no fue sincronizada.')
+  if (!detail && !order) throw new Error('La venta todavía no fue sincronizada.')
+
   return {
-    packId: order.packId || null,
-    invoiceAttached: Boolean(order.invoiceAttached),
-    invoiceDocuments: order.invoiceDocuments || [],
-    invoiceCheckedAt: order.invoiceCheckedAt || null,
-    invoiceCheckError: order.invoiceCheckError || null,
+    packId: detail?.packId || order?.packId || null,
+    invoiceAttached: Boolean(detail?.invoiceAttached || order?.invoiceAttached),
+    invoiceDocuments: detail?.invoiceDocuments || order?.invoiceDocuments || [],
+    invoiceCheckedAt: detail?.invoiceCheckedAt || order?.invoiceCheckedAt || null,
+    invoiceCheckError: detail?.invoiceCheckError || order?.invoiceCheckError || null,
   }
 }
 
@@ -719,39 +683,7 @@ export async function getOrderDetail(orderId) {
   if (!order) throw new Error('La venta todavía no fue sincronizada.')
 
   return {
-    detail: {
-      id,
-      packId: order.packId || null,
-      status: order.marketplaceStatus || '',
-      dateCreated: order.dateCreated || null,
-      invoiceAttached: Boolean(order.invoiceAttached),
-      invoiceSource: order.invoiceSource || null,
-      invoiceDocuments: order.invoiceDocuments || [],
-      invoiceCheckedAt: order.invoiceCheckedAt || null,
-      invoiceCheckError: order.invoiceCheckError || null,
-      buyer: {
-        id: null,
-        nickname: null,
-        name: order.customer || 'Sin datos',
-        documentType: order.documentType || 'Sin datos',
-        documentNumber: String(order.documentNumber || 'Sin datos'),
-        phone: null,
-        email: null,
-      },
-      address: null,
-      billingAddress: null,
-      items: order.items || [],
-      amounts: {
-        total: Number(order.total || 0),
-        paid: Number(order.total || 0),
-        shippingCost: 0,
-        marketplaceFees: 0,
-        taxes: 0,
-        netAmount: Number(order.total || 0),
-      },
-      payments: [],
-      partial: true,
-    },
+    detail: detailFromStoredOrder(order),
     cached: true,
     partial: true,
   }
@@ -759,6 +691,7 @@ export async function getOrderDetail(orderId) {
 
 export async function getStatus() {
   const store = await readStore()
+
   return {
     connected: Boolean(store.account && store.tokens?.accessToken),
     account: store.account,
@@ -767,184 +700,120 @@ export async function getStatus() {
   }
 }
 
-export async function syncOrders({ page = 1, pageSize = SYNC_PAGE_SIZE } = {}) {
-  const store = await readStore()
-  if (!store.account?.id) throw new Error('Mercado Libre no está conectado')
+// Sincronización diaria: descarga el índice COMPLETO de ventas con pocas llamadas
+// (50 por página) y solo completa datos fiscales/entrega para las 50 más recientes.
+// Navegar o abrir ventas después de esto NO vuelve a llamar a Mercado Libre.
+export async function syncOrders() {
+  const initialStore = await readStore()
+  if (!initialStore.account?.id) throw new Error('Mercado Libre no está conectado')
 
-  const safePage = Math.max(1, Number.parseInt(page, 10) || 1)
-  const safePageSize = Math.min(50, Math.max(1, Number.parseInt(pageSize, 10) || 50))
-  const offset = (safePage - 1) * safePageSize
-  const query = new URLSearchParams({
-    seller: String(store.account.id),
-    sort: 'date_desc',
-    limit: String(safePageSize),
-    offset: String(offset),
+  const token = await getAccessToken()
+  const sellerId = String(initialStore.account.id)
+  const previousOrders = new Map((initialStore.orders || []).map((order) => [String(order.id), order]))
+  const previousDetails = { ...(initialStore.details || {}) }
+  const rawOrders = []
+
+  let offset = 0
+  let expectedTotal = null
+
+  // Esta fase requiere ~28 requests para 1.378 ventas, no miles.
+  while (expectedTotal === null || offset < expectedTotal) {
+    const query = new URLSearchParams({
+      seller: sellerId,
+      sort: 'date_desc',
+      limit: String(SYNC_PAGE_SIZE),
+      offset: String(offset),
+    })
+
+    const result = await apiFetch(`/orders/search?${query.toString()}`, token, { retries: 2 })
+    const batch = Array.isArray(result.results) ? result.results : []
+    expectedTotal = Number(result.paging?.total ?? batch.length)
+    rawOrders.push(...batch)
+    if (!batch.length) break
+    offset += batch.length
+    await sleep(120)
+  }
+
+  const rawById = new Map(rawOrders.map((order) => [String(order.id), order]))
+  const normalizedOrders = rawOrders.map((raw) => {
+    const id = String(raw.id)
+    const previous = previousOrders.get(id) || {}
+    const previousDetail = previousDetails[id]
+    const priorFiscal = {
+      packId: previousDetail?.packId || previous.packId || null,
+      invoiceAttached: Boolean(previousDetail?.invoiceAttached || previous.invoiceAttached),
+      invoiceDocuments: previousDetail?.invoiceDocuments || previous.invoiceDocuments || [],
+      invoiceCheckedAt: previousDetail?.invoiceCheckedAt || previous.invoiceCheckedAt || null,
+      invoiceCheckError: previousDetail?.invoiceCheckError || previous.invoiceCheckError || null,
+    }
+    const normalized = normalizeOrder(raw, priorFiscal)
+
+    // Conservamos CUIT/DNI y nombre real ya conocidos en sincronizaciones anteriores.
+    normalized.customer = previousDetail?.buyer?.name || previous.customer || normalized.customer
+    normalized.documentType = previousDetail?.buyer?.documentType || previous.documentType || ''
+    normalized.documentNumber = previousDetail?.buyer?.documentNumber || previous.documentNumber || ''
+    return normalized
   })
 
-  runtimeSyncStatus = {
-    running: true,
-    phase: 'recent',
-    processed: 0,
-    total: safePageSize,
-    message: 'Sincronizando las 50 ventas más recientes…',
-    startedAt: new Date().toISOString(),
-    finishedAt: null,
-    error: null,
-  }
+  const ordersById = new Map(normalizedOrders.map((order) => [String(order.id), order]))
+  const recentRaw = rawOrders.slice(0, RECENT_DETAIL_COUNT)
 
-  try {
-    const result = await apiFetch(`/orders/search?${query.toString()}`, undefined, { retries: 1 })
-    const rawOrders = Array.isArray(result.results) ? result.results : []
-    const token = await getAccessToken()
+  // Solo las operaciones del día / más recientes se enriquecen con CUIT-DNI,
+  // entrega y factura adjunta. Esto reproduce el volumen estable de 50 operaciones.
+  const enrichment = await mapRecentWithConcurrency(
+    recentRaw,
+    RECENT_DETAIL_CONCURRENCY,
+    async (raw) => {
+      const id = String(raw.id)
+      const enriched = await fetchOrderDetailFromMercadoLibre(raw, token)
+      previousDetails[id] = enriched.detail
 
-    const fiscalInformation = await mapWithConcurrency(
-      rawOrders,
-      INVOICE_CHECK_CONCURRENCY,
-      async (order) => {
-        try {
-          return await readFiscalDocumentsForOrder(order, token)
-        } catch (error) {
-          return {
-            packId: fiscalDocumentReference(order),
-            invoiceAttached: false,
-            invoiceDocuments: [],
-            invoiceCheckedAt: new Date().toISOString(),
-            invoiceCheckError: error.message,
-          }
-        }
-      },
-    )
+      const normalized = normalizeOrder(raw, enriched.fiscalInfo)
+      normalized.customer = enriched.detail.buyer?.name || normalized.customer
+      normalized.documentType = enriched.detail.buyer?.documentType || ''
+      normalized.documentNumber = enriched.detail.buyer?.documentNumber || ''
+      ordersById.set(id, normalized)
+      return id
+    },
+  )
 
-    const detailsArray = await mapWithConcurrency(
-      rawOrders,
-      DETAIL_SYNC_CONCURRENCY,
-      async (order, index) => {
-        try {
-          const detail = await buildStoredDetail(order, token, fiscalInformation[index])
-          await sleep(180)
-          return detail
-        } catch (error) {
-          await sleep(400)
-          const base = normalizeOrder(order, fiscalInformation[index])
-          return {
-            id: String(order.id),
-            packId: base.packId || null,
-            status: order.status || '',
-            dateCreated: order.date_created || null,
-            invoiceAttached: Boolean(base.invoiceAttached),
-            invoiceSource: base.invoiceSource || null,
-            invoiceDocuments: base.invoiceDocuments || [],
-            invoiceCheckedAt: base.invoiceCheckedAt || null,
-            invoiceCheckError: base.invoiceCheckError || null,
-            buyer: {
-              id: order.buyer?.id ? String(order.buyer.id) : null,
-              nickname: order.buyer?.nickname || null,
-              name: base.customer || 'Sin datos',
-              documentType: 'Sin datos',
-              documentNumber: 'Sin datos',
-              phone: null,
-              email: order.buyer?.email || null,
-            },
-            address: null,
-            billingAddress: null,
-            items: base.items || [],
-            amounts: {
-              total: Number(base.total || 0),
-              paid: Number(base.total || 0),
-              shippingCost: 0,
-              marketplaceFees: 0,
-              taxes: 0,
-              netAmount: Number(base.total || 0),
-            },
-            payments: [],
-            partial: true,
-            syncError: error.message,
-          }
-        }
-      },
-    )
+  const lastSyncAt = new Date().toISOString()
+  const finalOrders = Array.from(ordersById.values())
 
-    const recentOrders = rawOrders.map((order, index) => {
-      const normalized = normalizeOrder(order, fiscalInformation[index])
-      const detail = detailsArray[index]
-      if (detail?.buyer) {
-        normalized.customer = detail.buyer.name || normalized.customer
-        normalized.documentType = detail.buyer.documentType || normalized.documentType
-        normalized.documentNumber = detail.buyer.documentNumber || normalized.documentNumber
-      }
-      return normalized
-    })
-
-    const details = { ...(store.details || {}) }
-    detailsArray.forEach((detail) => {
-      if (detail?.id) details[String(detail.id)] = detail
-    })
-
-    const mergedOrders = mergeRecentOrders(recentOrders, store.orders || [])
-    const lastSyncAt = new Date().toISOString()
-    const marketplaceTotal = Number(result.paging?.total ?? mergedOrders.length)
-
-    await updateStore((current) => ({
-      ...current,
-      orders: mergedOrders,
-      details,
-      lastSyncAt,
-      marketplaceTotal,
-      syncStatus: {
-        running: false,
-        phase: 'done',
-        processed: rawOrders.length,
-        total: rawOrders.length,
-        message: `${rawOrders.length} ventas recientes sincronizadas.`,
-        finishedAt: lastSyncAt,
-        error: null,
-      },
-    }))
-
-    runtimeSyncStatus = {
-      running: false,
-      phase: 'done',
-      processed: rawOrders.length,
-      total: rawOrders.length,
-      message: `${rawOrders.length} ventas recientes sincronizadas.`,
-      finishedAt: lastSyncAt,
-      error: null,
-    }
-
-    return {
-      orders: recentOrders,
+  await updateStore((store) => ({
+    ...store,
+    orders: finalOrders,
+    details: previousDetails,
+    lastSyncAt,
+    pagination: {
       page: 1,
-      pageSize: safePageSize,
-      total: mergedOrders.length,
-      totalPages: Math.max(1, Math.ceil(mergedOrders.length / safePageSize)),
-      marketplaceTotal,
-      lastSyncAt,
-      message: runtimeSyncStatus.message,
-    }
-  } catch (error) {
-    runtimeSyncStatus = {
-      running: false,
-      phase: 'error',
-      processed: 0,
-      total: 0,
-      message: error.message,
-      finishedAt: new Date().toISOString(),
-      error: error.message,
-    }
-    throw error
-  }
-}
+      pageSize: 50,
+      total: finalOrders.length,
+      totalPages: Math.max(1, Math.ceil(finalOrders.length / 50)),
+      offset: 0,
+    },
+  }))
 
-export async function getSyncStatus() {
-  const store = await readStore()
-  return runtimeSyncStatus || store.syncStatus || {
-    running: false,
-    phase: 'idle',
-    processed: 0,
-    total: 0,
-    message: '',
-    error: null,
-    lastSyncAt: store.lastSyncAt || null,
+  const invoiceSummary = finalOrders.reduce((summary, order) => {
+    if (order.invoiceAttached) summary.invoiced += 1
+    if (order.invoiceCheckError) summary.errors += 1
+    return summary
+  }, { invoiced: 0, errors: 0 })
+
+  return {
+    ok: true,
+    orders: finalOrders.slice(0, SYNC_PAGE_SIZE),
+    page: 1,
+    pageSize: SYNC_PAGE_SIZE,
+    total: finalOrders.length,
+    totalPages: Math.max(1, Math.ceil(finalOrders.length / SYNC_PAGE_SIZE)),
+    lastSyncAt,
+    invoiceSummary,
+    recentDetailsUpdated: RECENT_DETAIL_COUNT,
+    rateLimited: enrichment.rateLimited,
+    message: enrichment.rateLimited
+      ? 'Ventas sincronizadas. Mercado Libre limitó parte del detalle reciente; Panadero conservó los datos ya guardados.'
+      : `Sincronización completa: ${finalOrders.length} ventas. Se actualizaron los datos de las 50 más recientes.`,
   }
 }
 
@@ -992,7 +861,6 @@ export async function getOrders({ page = 1, pageSize = 50, query = '', status = 
     offset,
     summary,
     allTotal: allOrders.length,
-    marketplaceTotal: Number(store.marketplaceTotal || allOrders.length),
     lastSyncAt: store.lastSyncAt || null,
   }
 }

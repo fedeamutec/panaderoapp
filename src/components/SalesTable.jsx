@@ -7,26 +7,17 @@ function formatCurrency(value) {
 }
 
 
-function fiscalDocumentLabel(type, number) {
-  const normalizedType = String(type || '').toUpperCase()
-  const normalizedNumber = String(number || '').replace(/\s+/g, '')
-  if (!normalizedNumber || normalizedNumber === 'SIN DATOS' || normalizedNumber === 'PENDIENTE') return '—'
-
-  if (normalizedType.includes('CUIT') || normalizedType.includes('CUIL')) {
-    const digits = normalizedNumber.replace(/\D/g, '')
-    const formatted = digits.length === 11
-      ? `${digits.slice(0, 2)}-${digits.slice(2, 10)}-${digits.slice(10)}`
-      : normalizedNumber
-    return `CUIT ${formatted}`
+function fiscalLabel(sale) {
+  const type = String(sale?.documentType || '').trim().toUpperCase()
+  const raw = String(sale?.documentNumber || '').replace(/\D/g, '')
+  if (!raw) return '—'
+  if (type === 'CUIT' && raw.length === 11) {
+    return `CUIT ${raw.slice(0, 2)}-${raw.slice(2, 10)}-${raw.slice(10)}`
   }
-
-  if (normalizedType.includes('DNI')) {
-    const digits = normalizedNumber.replace(/\D/g, '')
-    const formatted = digits ? Number(digits).toLocaleString('es-AR') : normalizedNumber
-    return `DNI ${formatted}`
+  if (type === 'DNI') {
+    return `DNI ${new Intl.NumberFormat('es-AR').format(Number(raw))}`
   }
-
-  return '—'
+  return `${type || 'Documento'} ${sale.documentNumber}`
 }
 
 function SalesTable({ sales, selectedSaleId, onSelectSale }) {
@@ -47,7 +38,7 @@ function SalesTable({ sales, selectedSaleId, onSelectSale }) {
               <small>#{sale.id}</small>
             </span>
             <span className="sale-meta">
-              {fiscalDocumentLabel(sale.documentType, sale.documentNumber)}
+              {fiscalLabel(sale)}
             </span>
           </span>
 
