@@ -55,6 +55,35 @@ async function writeSaleInvoices(invoices) {
   await fs.rename(temporaryPath, saleInvoicesPath)
 }
 
+app.get('/api/exchange/bna', async (_req, res) => {
+  try {
+    const response = await fetch('https://www.bna.com.ar/Personas', {
+      headers: { 'User-Agent': 'Panadero/1.0 (+https://panaderoapp.com)' },
+      signal: AbortSignal.timeout(8000),
+    })
+    if (!response.ok) throw new Error(`Banco Nación respondió ${response.status}`)
+    const html = await response.text()
+    const plain = html
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;|&#160;/gi, ' ')
+      .replace(/\s+/g, ' ')
+
+    const dollar = plain.match(/D[oó]lar\s+U\.S\.A\s+([\d.,]+)\s+([\d.,]+)/i)
+    if (!dollar) throw new Error('No se encontró la cotización de dólar billete en BNA.')
+    const parseBna = (value) => Number(String(value).replace(/\./g, '').replace(',', '.'))
+    const date = plain.match(/(\d{1,2}\/\d{1,2}\/\d{4})\s+Compra\s+Venta/i)?.[1] || ''
+    const time = plain.match(/Hora\s+Actualizaci[oó]n:\s*(\d{1,2}:\d{2})/i)?.[1] || ''
+
+    res.setHeader('Cache-Control', 'public, max-age=300')
+    res.json({ ok: true, source: 'BNA', currency: 'USD', type: 'billete', buy: parseBna(dollar[1]), sell: parseBna(dollar[2]), date, time })
+  } catch (error) {
+    console.error('BNA exchange error:', error)
+    res.status(502).json({ ok: false, error: error.message })
+  }
+})
+
 app.get('/api/health', (_req, res) => res.json({ ok: true }))
 
 app.post('/api/auth/login', (req, res) => {
