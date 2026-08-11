@@ -26,6 +26,7 @@ import {
 import { ARCA_DATA_DIR, ARCA_POINT_OF_SALE } from './arca/config.js'
 import { buildInvoicePdf } from './invoicePdf.js'
 import { authenticate, clearSessionCookie, createSessionCookie, getSession, requireAuth } from './auth.js'
+import { readBudgetsStore, updateBudgetsStore } from './budgetsStore.js'
 
 const app = express()
 const port = Number(process.env.API_PORT || 3001)
@@ -123,6 +124,72 @@ app.post('/api/auth/logout', (_req, res) => {
 app.use('/api', (req, res, next) => {
   if (req.path === '/health' || req.path.startsWith('/auth/') || req.path === '/mercadolibre/callback') return next()
   return requireAuth(req, res, next)
+})
+
+app.get('/api/budgets/state', async (_req, res) => {
+  try {
+    const state = await readBudgetsStore()
+    res.json({ ok: true, ...state })
+  } catch (error) {
+    console.error('Read budgets state error:', error)
+    res.status(500).json({ ok: false, error: error.message })
+  }
+})
+
+app.put('/api/budgets/settings', async (req, res) => {
+  try {
+    const requestedNextNumber = Number(req.body?.nextNumber)
+    const state = await updateBudgetsStore((current) => ({
+      ...current,
+      brand: req.body?.brand ? { ...current.brand, ...req.body.brand } : current.brand,
+      nextNumber: Number.isInteger(requestedNextNumber) && requestedNextNumber > 0
+        ? requestedNextNumber
+        : current.nextNumber,
+    }))
+    res.json({ ok: true, ...state })
+  } catch (error) {
+    console.error('Save budgets settings error:', error)
+    res.status(400).json({ ok: false, error: error.message })
+  }
+})
+
+app.post('/api/budgets/confirm', async (req, res) => {
+  try {
+    const requestedNumber = Number(req.body?.number)
+    if (!Number.isInteger(requestedNumber) || requestedNumber <= 0) {
+      throw new Error('El número de presupuesto debe ser un entero mayor a 0.')
+    }
+
+    const state = await updateBudgetsStore((current) => {
+      const duplicate = current.generatedBudgets.find((item) => Number(item?.number) === requestedNumber)
+      if (duplicate) {
+        const error = new Error(`Ya existe el presupuesto N.º ${String(requestedNumber).padStart(6, '0')}.`)
+        error.code = 'DUPLICATE_BUDGET_NUMBER'
+        throw error
+      }
+
+      const snapshot = {
+        ...req.body?.budget,
+        id: req.body?.budget?.id || `budget-${Date.now()}`,
+        number: requestedNumber,
+        createdAt: req.body?.budget?.createdAt || new Date().toISOString(),
+        status: 'confirmed',
+      }
+
+      return {
+        ...current,
+        brand: snapshot.brand ? { ...current.brand, ...snapshot.brand } : current.brand,
+        generatedBudgets: [snapshot, ...current.generatedBudgets],
+        nextNumber: Math.max(current.nextNumber, requestedNumber + 1),
+      }
+    })
+
+    const budget = state.generatedBudgets.find((item) => Number(item.number) === requestedNumber)
+    res.json({ ok: true, budget, nextNumber: state.nextNumber, generatedBudgets: state.generatedBudgets, brand: state.brand })
+  } catch (error) {
+    console.error('Confirm budget error:', error)
+    res.status(error?.code === 'DUPLICATE_BUDGET_NUMBER' ? 409 : 400).json({ ok: false, error: error.message })
+  }
 })
 
 app.get('/api/arca/status', async (_req, res) => {

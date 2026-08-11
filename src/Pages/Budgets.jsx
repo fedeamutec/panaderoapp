@@ -192,6 +192,8 @@ function Budgets() {
   const [priceQuery, setPriceQuery] = useState('')
   const [items, setItems] = useState([])
   const [generatedBudgets, setGeneratedBudgets] = useState(() => readStored(BUDGETS_KEY, []))
+  const [nextNumber, setNextNumber] = useState(() => readStored(BUDGETS_KEY, []).reduce((highest, budget) => Math.max(highest, Number(budget.number || 0)), 0) + 1)
+  const [serverBudgetReady, setServerBudgetReady] = useState(false)
   const [viewMode, setViewMode] = useState('new')
   const [confirmedBudget, setConfirmedBudget] = useState(null)
   const [selectedGeneratedId, setSelectedGeneratedId] = useState(() => readStored(BUDGETS_KEY, [])[0]?.id || '')
@@ -208,6 +210,57 @@ function Budgets() {
 
   const selectedClient = clients.find((client) => client.id === selectedClientId) || clients[0] || null
   const selectedGenerated = generatedBudgets.find((budget) => budget.id === selectedGeneratedId) || generatedBudgets[0] || null
+
+  useEffect(() => {
+    let cancelled = false
+    const loadBudgetState = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/budgets/state`, { credentials: 'include' })
+        if (!response.ok) throw new Error(`No se pudo cargar la configuración de presupuestos (${response.status}).`)
+        const data = await response.json()
+        if (cancelled) return
+
+        const serverBrand = data.brand || {}
+        const hasServerBrand = Boolean(serverBrand.name || serverBrand.subtitle || serverBrand.logo || serverBrand.conditions)
+        if (hasServerBrand) {
+          setBrand(serverBrand)
+          localStorage.setItem(BRAND_KEY, JSON.stringify(serverBrand))
+        }
+
+        if (Array.isArray(data.generatedBudgets)) {
+          setGeneratedBudgets(data.generatedBudgets)
+          setSelectedGeneratedId(data.generatedBudgets[0]?.id || '')
+          localStorage.setItem(BUDGETS_KEY, JSON.stringify(data.generatedBudgets))
+        }
+
+        const serverNext = Number(data.nextNumber)
+        if (Number.isInteger(serverNext) && serverNext > 0) setNextNumber(serverNext)
+      } catch (error) {
+        console.warn('No se pudo cargar el estado online de presupuestos:', error)
+      } finally {
+        if (!cancelled) setServerBudgetReady(true)
+      }
+    }
+    loadBudgetState()
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    if (!serverBudgetReady) return undefined
+    const timer = window.setTimeout(async () => {
+      try {
+        await fetch(`${API_BASE}/budgets/settings`, {
+          method: 'PUT',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ brand, nextNumber }),
+        })
+      } catch (error) {
+        console.warn('No se pudo guardar la configuración online de presupuestos:', error)
+      }
+    }, 500)
+    return () => window.clearTimeout(timer)
+  }, [brand, nextNumber, serverBudgetReady])
 
   useEffect(() => {
     const loadFx = async () => {
@@ -363,7 +416,7 @@ function Budgets() {
   }
 
   const createCurrentSnapshot = ({ draft = false } = {}) => ({
-    number: confirmedBudget?.number || generatedBudgets.reduce((highest, budget) => Math.max(highest, Number(budget.number || 0)), 0) + 1,
+    number: confirmedBudget?.number || nextNumber,
     client: { ...(clientDraft || selectedClient || {}) },
     items: items.map((item) => ({ ...item })),
     brand: { ...brand },
@@ -388,7 +441,7 @@ function Budgets() {
     setPrintPayload({ type: 'transport', data: budget })
   }
 
-  const confirmBudget = () => {
+  const confirmBudget = async () => {
     if (!clientDraft && !selectedClient) {
       setNotice('Seleccioná un cliente antes de confirmar el presupuesto.')
       return
@@ -398,10 +451,15 @@ function Budgets() {
       return
     }
 
-    const nextNumber = generatedBudgets.reduce((highest, budget) => Math.max(highest, Number(budget.number || 0)), 0) + 1
+    const requestedNumber = Number(nextNumber)
+    if (!Number.isInteger(requestedNumber) || requestedNumber <= 0) {
+      setNotice('Ingresá un número de presupuesto válido.')
+      return
+    }
+
     const snapshot = {
       id: `budget-${Date.now()}`,
-      number: nextNumber,
+      number: requestedNumber,
       createdAt: new Date().toISOString(),
       status: 'confirmed',
       client: { ...(clientDraft || selectedClient) },
@@ -409,12 +467,30 @@ function Budgets() {
       brand: { ...brand },
       total: budgetTotal(items),
     }
-    const nextBudgets = [snapshot, ...generatedBudgets]
-    setGeneratedBudgets(nextBudgets)
-    setSelectedGeneratedId(snapshot.id)
-    setConfirmedBudget(snapshot)
-    localStorage.setItem(BUDGETS_KEY, JSON.stringify(nextBudgets))
-    setNotice(`Presupuesto N.º ${String(nextNumber).padStart(6, '0')} confirmado y guardado.`)
+
+    try {
+      const response = await fetch(`${API_BASE}/budgets/confirm`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ number: requestedNumber, budget: snapshot }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || 'No se pudo confirmar el presupuesto.')
+
+      const confirmed = data.budget || snapshot
+      const nextBudgets = Array.isArray(data.generatedBudgets) ? data.generatedBudgets : [confirmed, ...generatedBudgets]
+      setGeneratedBudgets(nextBudgets)
+      setSelectedGeneratedId(confirmed.id)
+      setConfirmedBudget(confirmed)
+      setNextNumber(Number(data.nextNumber) || requestedNumber + 1)
+      if (data.brand) setBrand(data.brand)
+      localStorage.setItem(BUDGETS_KEY, JSON.stringify(nextBudgets))
+      if (data.brand) localStorage.setItem(BRAND_KEY, JSON.stringify(data.brand))
+      setNotice(`Presupuesto N.º ${String(requestedNumber).padStart(6, '0')} confirmado y guardado online.`)
+    } catch (error) {
+      setNotice(error.message)
+    }
   }
 
   const openGeneratedBudget = (budget) => {
@@ -711,8 +787,27 @@ function Budgets() {
           </section>
 
           <section className="budget-preview-column">
-            <div className="budget-column-heading"><div><span>Documento</span><strong>Vista previa</strong></div><div className="budget-preview-actions"><button className="ghost-button" type="button" onClick={printDraft}>Guardar borrador</button><button className="ghost-button budget-confirm-button" type="button" onClick={confirmBudget}>Confirmar</button><button className="ghost-button" type="button" disabled={!confirmedBudget} onClick={() => printTransport(confirmedBudget)}>Transporte</button><button className="primary-button" type="button" disabled={!confirmedBudget} onClick={() => printConfirmedBudget(confirmedBudget)}>PDF / Descargar</button></div></div>
-            <div className="budget-preview-scroll"><Preview brand={brand} client={clientDraft || selectedClient} items={items} number={confirmedBudget?.number || generatedBudgets.reduce((highest, budget) => Math.max(highest, Number(budget.number || 0)), 0) + 1} /></div>
+            <div className="budget-column-heading budget-preview-heading"><div><span>Documento</span><strong>Vista previa</strong></div><div className="budget-preview-actions"><button className="ghost-button" type="button" onClick={printDraft}>Guardar borrador</button><button className="ghost-button budget-confirm-button" type="button" onClick={confirmBudget}>Confirmar</button><button className="ghost-button" type="button" disabled={!confirmedBudget} onClick={() => printTransport(confirmedBudget)}>Transporte</button><button className="primary-button" type="button" disabled={!confirmedBudget} onClick={() => printConfirmedBudget(confirmedBudget)}>PDF / Descargar</button></div></div>
+            <div className="budget-number-panel">
+              <div>
+                <span>N.º presupuesto</span>
+                <small>{confirmedBudget ? 'Presupuesto confirmado' : 'Podés editarlo antes de confirmar'}</small>
+              </div>
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={String(confirmedBudget?.number || nextNumber).padStart(6, '0')}
+                disabled={Boolean(confirmedBudget)}
+                onChange={(event) => {
+                  const digits = event.target.value.replace(/\D/g, '')
+                  const value = Number(digits)
+                  if (Number.isInteger(value) && value > 0) setNextNumber(value)
+                }}
+                aria-label="Número de presupuesto"
+              />
+            </div>
+            <div className="budget-preview-scroll"><Preview brand={brand} client={clientDraft || selectedClient} items={items} number={confirmedBudget?.number || nextNumber} /></div>
           </section>
         </div>
       ) : (
