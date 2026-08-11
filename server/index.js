@@ -129,7 +129,13 @@ app.use('/api', (req, res, next) => {
 app.get('/api/budgets/state', async (_req, res) => {
   try {
     const state = await readBudgetsStore()
-    res.json({ ok: true, ...state })
+    const activeBrand = state.brands.find((brand) => brand.id === state.activeBrandId) || state.brands[0]
+    res.json({
+      ok: true,
+      ...state,
+      brand: activeBrand,
+      nextNumber: activeBrand?.nextNumber || 1,
+    })
   } catch (error) {
     console.error('Read budgets state error:', error)
     res.status(500).json({ ok: false, error: error.message })
@@ -138,15 +144,21 @@ app.get('/api/budgets/state', async (_req, res) => {
 
 app.put('/api/budgets/settings', async (req, res) => {
   try {
-    const requestedNextNumber = Number(req.body?.nextNumber)
-    const state = await updateBudgetsStore((current) => ({
-      ...current,
-      brand: req.body?.brand ? { ...current.brand, ...req.body.brand } : current.brand,
-      nextNumber: Number.isInteger(requestedNextNumber) && requestedNextNumber > 0
-        ? requestedNextNumber
-        : current.nextNumber,
-    }))
-    res.json({ ok: true, ...state })
+    const state = await updateBudgetsStore((current) => {
+      const incomingBrands = Array.isArray(req.body?.brands) ? req.body.brands : current.brands
+      const requestedActive = String(req.body?.activeBrandId || current.activeBrandId || '')
+      const activeBrandId = incomingBrands.some((brand) => brand.id === requestedActive)
+        ? requestedActive
+        : incomingBrands[0]?.id || ''
+
+      return {
+        ...current,
+        brands: incomingBrands,
+        activeBrandId,
+      }
+    })
+    const activeBrand = state.brands.find((brand) => brand.id === state.activeBrandId) || state.brands[0]
+    res.json({ ok: true, ...state, brand: activeBrand, nextNumber: activeBrand?.nextNumber || 1 })
   } catch (error) {
     console.error('Save budgets settings error:', error)
     res.status(400).json({ ok: false, error: error.message })
@@ -156,14 +168,23 @@ app.put('/api/budgets/settings', async (req, res) => {
 app.post('/api/budgets/confirm', async (req, res) => {
   try {
     const requestedNumber = Number(req.body?.number)
+    const requestedBrandId = String(req.body?.brandId || req.body?.budget?.brand?.id || '')
     if (!Number.isInteger(requestedNumber) || requestedNumber <= 0) {
       throw new Error('El número de presupuesto debe ser un entero mayor a 0.')
     }
 
     const state = await updateBudgetsStore((current) => {
-      const duplicate = current.generatedBudgets.find((item) => Number(item?.number) === requestedNumber)
+      const activeBrand = current.brands.find((brand) => brand.id === requestedBrandId)
+        || current.brands.find((brand) => brand.id === current.activeBrandId)
+        || current.brands[0]
+      if (!activeBrand) throw new Error('No hay una marca configurada para este presupuesto.')
+
+      const duplicate = current.generatedBudgets.find((item) => {
+        const itemBrandId = item?.brand?.id || item?.brandId || current.brands[0]?.id
+        return itemBrandId === activeBrand.id && Number(item?.number) === requestedNumber
+      })
       if (duplicate) {
-        const error = new Error(`Ya existe el presupuesto N.º ${String(requestedNumber).padStart(6, '0')}.`)
+        const error = new Error(`Ya existe el presupuesto N.º ${String(requestedNumber).padStart(6, '0')} para ${activeBrand.name || 'esta marca'}.`)
         error.code = 'DUPLICATE_BUDGET_NUMBER'
         throw error
       }
@@ -172,20 +193,36 @@ app.post('/api/budgets/confirm', async (req, res) => {
         ...req.body?.budget,
         id: req.body?.budget?.id || `budget-${Date.now()}`,
         number: requestedNumber,
+        brandId: activeBrand.id,
+        brand: { ...activeBrand, ...(req.body?.budget?.brand || {}), id: activeBrand.id },
         createdAt: req.body?.budget?.createdAt || new Date().toISOString(),
         status: 'confirmed',
       }
 
+      const brands = current.brands.map((brand) => brand.id === activeBrand.id
+        ? { ...brand, ...snapshot.brand, nextNumber: Math.max(Number(brand.nextNumber || 1), requestedNumber + 1) }
+        : brand)
+
       return {
         ...current,
-        brand: snapshot.brand ? { ...current.brand, ...snapshot.brand } : current.brand,
+        brands,
+        activeBrandId: activeBrand.id,
         generatedBudgets: [snapshot, ...current.generatedBudgets],
-        nextNumber: Math.max(current.nextNumber, requestedNumber + 1),
       }
     })
 
-    const budget = state.generatedBudgets.find((item) => Number(item.number) === requestedNumber)
-    res.json({ ok: true, budget, nextNumber: state.nextNumber, generatedBudgets: state.generatedBudgets, brand: state.brand })
+    const activeBrand = state.brands.find((brand) => brand.id === state.activeBrandId) || state.brands[0]
+    const budget = state.generatedBudgets.find((item) => item.id === req.body?.budget?.id)
+      || state.generatedBudgets.find((item) => (item.brand?.id || item.brandId) === activeBrand?.id && Number(item.number) === requestedNumber)
+    res.json({
+      ok: true,
+      budget,
+      brands: state.brands,
+      activeBrandId: state.activeBrandId,
+      nextNumber: activeBrand?.nextNumber || requestedNumber + 1,
+      generatedBudgets: state.generatedBudgets,
+      brand: activeBrand,
+    })
   } catch (error) {
     console.error('Confirm budget error:', error)
     res.status(error?.code === 'DUPLICATE_BUDGET_NUMBER' ? 409 : 400).json({ ok: false, error: error.message })

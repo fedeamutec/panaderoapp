@@ -12,6 +12,22 @@ const FX_KEY = 'panadero-budget-bna-fx'
 const DEFAULT_PROFIT_KEY = 'panadero-budget-default-profit'
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3001/api' : 'https://api.panaderoapp.com/api'
 
+const DEFAULT_BRAND = { id: 'brand-1', name: '', subtitle: '', validity: '10 días', conditions: '', logo: '', nextNumber: 1 }
+
+function createBrandId() {
+  return `brand-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+}
+
+function normalizeBrandRecord(brand = {}, fallbackId = '') {
+  const next = Number(brand.nextNumber || 1)
+  return {
+    ...DEFAULT_BRAND,
+    ...brand,
+    id: String(brand.id || fallbackId || createBrandId()),
+    nextNumber: Number.isInteger(next) && next > 0 ? next : 1,
+  }
+}
+
 function readStored(key, fallback) {
   try {
     const parsed = JSON.parse(localStorage.getItem(key) || '')
@@ -185,14 +201,17 @@ function Budgets() {
   const [defaultProfit, setDefaultProfit] = useState(() => numberValue(localStorage.getItem(DEFAULT_PROFIT_KEY), 30))
   const [fx, setFx] = useState(() => readStored(FX_KEY, { buy: 0, sell: 0, date: '', time: '', source: 'BNA', manual: false }))
   const [fxLoading, setFxLoading] = useState(false)
-  const [brand, setBrand] = useState(() => readStored(BRAND_KEY, { name: '', subtitle: '', validity: '10 días', conditions: '' }))
+  const legacyBrand = readStored(BRAND_KEY, DEFAULT_BRAND)
+  const [brands, setBrands] = useState(() => [normalizeBrandRecord(legacyBrand, 'brand-1')])
+  const [activeBrandId, setActiveBrandId] = useState('brand-1')
+  const [brandDraft, setBrandDraft] = useState(null)
   const [selectedClientId, setSelectedClientId] = useState(() => readStored(CLIENTS_KEY, defaultClients)[0]?.id || '')
   const [clientQuery, setClientQuery] = useState('')
   const [productQuery, setProductQuery] = useState('')
   const [priceQuery, setPriceQuery] = useState('')
   const [items, setItems] = useState([])
   const [generatedBudgets, setGeneratedBudgets] = useState(() => readStored(BUDGETS_KEY, []))
-  const [nextNumber, setNextNumber] = useState(() => readStored(BUDGETS_KEY, []).reduce((highest, budget) => Math.max(highest, Number(budget.number || 0)), 0) + 1)
+  const [nextNumber, setNextNumber] = useState(1)
   const [serverBudgetReady, setServerBudgetReady] = useState(false)
   const [viewMode, setViewMode] = useState('new')
   const [confirmedBudget, setConfirmedBudget] = useState(null)
@@ -207,6 +226,7 @@ function Budgets() {
   const productInput = useRef(null)
 
   const allProducts = useMemo(() => [...manualProducts, ...products], [manualProducts, products])
+  const brand = useMemo(() => brands.find((item) => item.id === activeBrandId) || brands[0] || DEFAULT_BRAND, [brands, activeBrandId])
 
   const selectedClient = clients.find((client) => client.id === selectedClientId) || clients[0] || null
   const selectedGenerated = generatedBudgets.find((budget) => budget.id === selectedGeneratedId) || generatedBudgets[0] || null
@@ -220,12 +240,17 @@ function Budgets() {
         const data = await response.json()
         if (cancelled) return
 
-        const serverBrand = data.brand || {}
-        const hasServerBrand = Boolean(serverBrand.name || serverBrand.subtitle || serverBrand.logo || serverBrand.conditions)
-        if (hasServerBrand) {
-          setBrand(serverBrand)
-          localStorage.setItem(BRAND_KEY, JSON.stringify(serverBrand))
-        }
+        const serverBrands = Array.isArray(data.brands) && data.brands.length
+          ? data.brands.map((item, index) => normalizeBrandRecord(item, `brand-${index + 1}`))
+          : [normalizeBrandRecord(data.brand || legacyBrand, 'brand-1')]
+        const serverActiveId = serverBrands.some((item) => item.id === data.activeBrandId)
+          ? data.activeBrandId
+          : serverBrands[0].id
+        setBrands(serverBrands)
+        setActiveBrandId(serverActiveId)
+        const activeServerBrand = serverBrands.find((item) => item.id === serverActiveId) || serverBrands[0]
+        setNextNumber(Number(activeServerBrand?.nextNumber || data.nextNumber || 1))
+        localStorage.setItem(BRAND_KEY, JSON.stringify(activeServerBrand))
 
         if (Array.isArray(data.generatedBudgets)) {
           setGeneratedBudgets(data.generatedBudgets)
@@ -233,8 +258,6 @@ function Budgets() {
           localStorage.setItem(BUDGETS_KEY, JSON.stringify(data.generatedBudgets))
         }
 
-        const serverNext = Number(data.nextNumber)
-        if (Number.isInteger(serverNext) && serverNext > 0) setNextNumber(serverNext)
       } catch (error) {
         console.warn('No se pudo cargar el estado online de presupuestos:', error)
       } finally {
@@ -244,23 +267,6 @@ function Budgets() {
     loadBudgetState()
     return () => { cancelled = true }
   }, [])
-
-  useEffect(() => {
-    if (!serverBudgetReady) return undefined
-    const timer = window.setTimeout(async () => {
-      try {
-        await fetch(`${API_BASE}/budgets/settings`, {
-          method: 'PUT',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ brand, nextNumber }),
-        })
-      } catch (error) {
-        console.warn('No se pudo guardar la configuración online de presupuestos:', error)
-      }
-    }, 500)
-    return () => window.clearTimeout(timer)
-  }, [brand, nextNumber, serverBudgetReady])
 
   useEffect(() => {
     const loadFx = async () => {
@@ -473,7 +479,7 @@ function Budgets() {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ number: requestedNumber, budget: snapshot }),
+        body: JSON.stringify({ number: requestedNumber, brandId: brand.id, budget: snapshot }),
       })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(data.error || 'No se pudo confirmar el presupuesto.')
@@ -483,10 +489,18 @@ function Budgets() {
       setGeneratedBudgets(nextBudgets)
       setSelectedGeneratedId(confirmed.id)
       setConfirmedBudget(confirmed)
-      setNextNumber(Number(data.nextNumber) || requestedNumber + 1)
-      if (data.brand) setBrand(data.brand)
+      if (Array.isArray(data.brands) && data.brands.length) {
+        const nextBrands = data.brands.map((item, index) => normalizeBrandRecord(item, `brand-${index + 1}`))
+        setBrands(nextBrands)
+        const nextActive = data.activeBrandId || activeBrandId
+        setActiveBrandId(nextActive)
+        const nextBrand = nextBrands.find((item) => item.id === nextActive) || nextBrands[0]
+        setNextNumber(Number(nextBrand?.nextNumber || data.nextNumber || requestedNumber + 1))
+        localStorage.setItem(BRAND_KEY, JSON.stringify(nextBrand))
+      } else {
+        setNextNumber(Number(data.nextNumber) || requestedNumber + 1)
+      }
       localStorage.setItem(BUDGETS_KEY, JSON.stringify(nextBudgets))
-      if (data.brand) localStorage.setItem(BRAND_KEY, JSON.stringify(data.brand))
       setNotice(`Presupuesto N.º ${String(requestedNumber).padStart(6, '0')} confirmado y guardado online.`)
     } catch (error) {
       setNotice(error.message)
@@ -509,10 +523,64 @@ function Budgets() {
     setNotice('Presupuesto duplicado. Podés editarlo y confirmarlo como uno nuevo.')
   }
 
-  const saveBrand = (next) => {
-    invalidateConfirmation()
-    setBrand(next)
-    localStorage.setItem(BRAND_KEY, JSON.stringify(next))
+  const openNewBrand = () => {
+    setBrandDraft({ ...DEFAULT_BRAND, id: createBrandId(), name: '', subtitle: '', validity: '10 días', conditions: '', logo: '', nextNumber: 1 })
+    setSettingsOpen(true)
+  }
+
+  const editActiveBrand = () => {
+    setBrandDraft({ ...brand })
+    setSettingsOpen(true)
+  }
+
+  const saveBrandDraft = async () => {
+    if (!brandDraft) return
+    const cleaned = normalizeBrandRecord({ ...brandDraft, name: clean(brandDraft.name) || 'Marca sin nombre' })
+    const exists = brands.some((item) => item.id === cleaned.id)
+    const nextBrands = exists
+      ? brands.map((item) => item.id === cleaned.id ? cleaned : item)
+      : [...brands, cleaned]
+    try {
+      const response = await fetch(`${API_BASE}/budgets/settings`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ brands: nextBrands, activeBrandId: cleaned.id }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || 'No se pudo guardar la marca.')
+      const storedBrands = (Array.isArray(data.brands) && data.brands.length ? data.brands : nextBrands).map((item, index) => normalizeBrandRecord(item, `brand-${index + 1}`))
+      setBrands(storedBrands)
+      setActiveBrandId(cleaned.id)
+      const stored = storedBrands.find((item) => item.id === cleaned.id) || cleaned
+      setNextNumber(Number(stored.nextNumber || 1))
+      localStorage.setItem(BRAND_KEY, JSON.stringify(stored))
+      setBrandDraft(null)
+      setSettingsOpen(false)
+      setConfirmedBudget(null)
+      setNotice(`${stored.name} fue guardada y quedó seleccionada.`)
+    } catch (error) {
+      setNotice(error.message)
+    }
+  }
+
+  const selectBrand = async (brandId) => {
+    const selected = brands.find((item) => item.id === brandId)
+    if (!selected) return
+    setActiveBrandId(brandId)
+    setNextNumber(Number(selected.nextNumber || 1))
+    setConfirmedBudget(null)
+    localStorage.setItem(BRAND_KEY, JSON.stringify(selected))
+    try {
+      await fetch(`${API_BASE}/budgets/settings`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ brands, activeBrandId: brandId }),
+      })
+    } catch {
+      // La selección local sigue disponible aunque el servidor esté temporalmente inaccesible.
+    }
   }
 
   const importClients = async (event) => {
@@ -699,7 +767,7 @@ function Budgets() {
           <label className="ghost-button budget-file-button">Importar precios<input ref={productInput} type="file" accept=".xlsx,.xls" onChange={importProducts} /></label>
           <button className="ghost-button" type="button" onClick={() => setPriceListOpen(true)}>Ver lista de precios</button>
           <button className="ghost-button" type="button" onClick={() => { setManualProductDraft((current) => ({ ...current, profitRate: defaultProfit })); setManualProductOpen(true) }}>＋ Agregar producto</button>
-          <button className="primary-button" type="button" onClick={() => setSettingsOpen((current) => !current)}>Configurar marca</button>
+          <button className="primary-button" type="button" onClick={openNewBrand}>Agregar marca</button>
         </div>
       </header>
 
@@ -713,13 +781,14 @@ function Budgets() {
         <small className="budget-fx-note">La cotización y la ganancia son internas y no aparecen en el PDF.</small>
       </section>
 
-      {settingsOpen && (
-        <section className="budget-brand-settings">
-          <label><span>Nombre de fantasía</span><input value={brand.name || ''} onChange={(event) => saveBrand({ ...brand, name: event.target.value })} placeholder="Ej. CR Argentina" /></label>
-          <label><span>Bajada</span><input value={brand.subtitle || ''} onChange={(event) => saveBrand({ ...brand, subtitle: event.target.value })} placeholder="Fábrica y distribución" /></label>
-          <label><span>Validez</span><input value={brand.validity || ''} onChange={(event) => saveBrand({ ...brand, validity: event.target.value })} /></label>
-          <label className="brand-logo-upload"><span>Logo</span><input type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => saveBrand({ ...brand, logo: reader.result }); reader.readAsDataURL(file) }} /></label>
-          <label className="brand-conditions"><span>Condiciones</span><input value={brand.conditions || ''} onChange={(event) => saveBrand({ ...brand, conditions: event.target.value })} placeholder="Entrega, pago y observaciones" /></label>
+      {settingsOpen && brandDraft && (
+        <section className="budget-brand-settings multi-brand-settings">
+          <label><span>Nombre de fantasía</span><input value={brandDraft.name || ''} onChange={(event) => setBrandDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Ej. CR Argentina" /></label>
+          <label><span>Bajada</span><input value={brandDraft.subtitle || ''} onChange={(event) => setBrandDraft((current) => ({ ...current, subtitle: event.target.value }))} placeholder="Fábrica y distribución" /></label>
+          <label><span>Validez</span><input value={brandDraft.validity || ''} onChange={(event) => setBrandDraft((current) => ({ ...current, validity: event.target.value }))} /></label>
+          <label className="brand-logo-upload"><span>Logo</span><input type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => setBrandDraft((current) => ({ ...current, logo: reader.result })); reader.readAsDataURL(file) }} /></label>
+          <label className="brand-conditions"><span>Condiciones</span><input value={brandDraft.conditions || ''} onChange={(event) => setBrandDraft((current) => ({ ...current, conditions: event.target.value }))} placeholder="Entrega, pago y observaciones" /></label>
+          <div className="brand-settings-actions"><button className="ghost-button" type="button" onClick={() => { setSettingsOpen(false); setBrandDraft(null) }}>Cancelar</button><button className="primary-button" type="button" onClick={saveBrandDraft}>Guardar marca</button></div>
         </section>
       )}
 
@@ -788,6 +857,11 @@ function Budgets() {
 
           <section className="budget-preview-column">
             <div className="budget-column-heading budget-preview-heading"><div><span>Documento</span><strong>Vista previa</strong></div><div className="budget-preview-actions"><button className="ghost-button" type="button" onClick={printDraft}>Guardar borrador</button><button className="ghost-button budget-confirm-button" type="button" onClick={confirmBudget}>Confirmar</button><button className="ghost-button" type="button" disabled={!confirmedBudget} onClick={() => printTransport(confirmedBudget)}>Transporte</button><button className="primary-button" type="button" disabled={!confirmedBudget} onClick={() => printConfirmedBudget(confirmedBudget)}>PDF / Descargar</button></div></div>
+            <div className="budget-brand-tabs" aria-label="Marcas de presupuesto">
+              {brands.map((item) => <button key={item.id} type="button" className={item.id === brand.id ? 'active' : ''} onClick={() => selectBrand(item.id)}><span>{item.name || 'Sin nombre'}</span><small>N.º {String(item.id === brand.id ? nextNumber : item.nextNumber || 1).padStart(6, '0')}</small></button>)}
+              <button type="button" className="brand-tab-edit" onClick={editActiveBrand}>Editar</button>
+              <button type="button" className="brand-tab-add" onClick={openNewBrand}>＋</button>
+            </div>
             <div className="budget-number-panel">
               <div>
                 <span>N.º presupuesto</span>
