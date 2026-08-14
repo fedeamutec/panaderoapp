@@ -20,6 +20,13 @@ async function api(path, options) {
   return payload
 }
 
+function noticeTone(message) {
+  const text = String(message || '').toLowerCase()
+  if (/no se pudo|error|rechaz|fall|inválid|incorrect|vencid/.test(text)) return 'error'
+  if (/seleccioná|agregá|ingresá|pendiente|revisar|todavía|falta|antes de/.test(text)) return 'warning'
+  return 'success'
+}
+
 function textOrDash(value) {
   if (value === null || value === undefined || value === '') return '—'
   return String(value)
@@ -460,7 +467,7 @@ function Home() {
       />
 
       {notice && (
-        <button className="notice-bar" type="button" onClick={() => setNotice('')}>
+        <button className={`notice-bar ${noticeTone(notice)}`} type="button" onClick={() => setNotice('')}>
           <span>{notice}</span><strong>×</strong>
         </button>
       )}

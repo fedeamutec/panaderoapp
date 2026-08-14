@@ -19,6 +19,13 @@ async function api(path, options) {
   return payload
 }
 
+function noticeTone(message) {
+  const text = String(message || '').toLowerCase()
+  if (/no se pudo|error|rechaz|fall|inválid|incorrect|vencid/.test(text)) return 'error'
+  if (/seleccioná|agregá|ingresá|pendiente|revisar|todavía|falta|antes de/.test(text)) return 'warning'
+  return 'success'
+}
+
 function formatDate(value) {
   if (!value) return '—'
   return new Date(value).toLocaleDateString('es-AR', {
@@ -172,7 +179,7 @@ function Invoices({ onNavigateToSales }) {
       />
 
       {notice && (
-        <button className="notice-bar" type="button" onClick={() => setNotice('')}>
+        <button className={`notice-bar ${noticeTone(notice)}`} type="button" onClick={() => setNotice('')}>
           <span>{notice}</span>
           <strong aria-hidden="true">×</strong>
         </button>

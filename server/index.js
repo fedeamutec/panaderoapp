@@ -126,15 +126,16 @@ app.use('/api', (req, res, next) => {
   return requireAuth(req, res, next)
 })
 
-app.get('/api/budgets/state', async (_req, res) => {
+app.get('/api/budgets/state', async (req, res) => {
   try {
-    const state = await readBudgetsStore()
+    const state = await readBudgetsStore(req.user.email)
     const activeBrand = state.brands.find((brand) => brand.id === state.activeBrandId) || state.brands[0]
     res.json({
       ok: true,
       ...state,
       brand: activeBrand,
       nextNumber: activeBrand?.nextNumber || 1,
+      account: req.user.email,
     })
   } catch (error) {
     console.error('Read budgets state error:', error)
@@ -144,7 +145,7 @@ app.get('/api/budgets/state', async (_req, res) => {
 
 app.put('/api/budgets/settings', async (req, res) => {
   try {
-    const state = await updateBudgetsStore((current) => {
+    const state = await updateBudgetsStore(req.user.email, (current) => {
       const incomingBrands = Array.isArray(req.body?.brands) ? req.body.brands : current.brands
       const requestedActive = String(req.body?.activeBrandId || current.activeBrandId || '')
       const activeBrandId = incomingBrands.some((brand) => brand.id === requestedActive)
@@ -155,6 +156,14 @@ app.put('/api/budgets/settings', async (req, res) => {
         ...current,
         brands: incomingBrands,
         activeBrandId,
+        clients: Array.isArray(req.body?.clients) ? req.body.clients : current.clients,
+        products: Array.isArray(req.body?.products) ? req.body.products : current.products,
+        manualProducts: Array.isArray(req.body?.manualProducts) ? req.body.manualProducts : current.manualProducts,
+        defaultProfit: Number.isFinite(Number(req.body?.defaultProfit)) ? Number(req.body.defaultProfit) : current.defaultProfit,
+        catalogInitialized: current.catalogInitialized
+          || Array.isArray(req.body?.clients)
+          || Array.isArray(req.body?.products)
+          || Array.isArray(req.body?.manualProducts),
       }
     })
     const activeBrand = state.brands.find((brand) => brand.id === state.activeBrandId) || state.brands[0]
@@ -173,7 +182,7 @@ app.post('/api/budgets/confirm', async (req, res) => {
       throw new Error('El número de presupuesto debe ser un entero mayor a 0.')
     }
 
-    const state = await updateBudgetsStore((current) => {
+    const state = await updateBudgetsStore(req.user.email, (current) => {
       const activeBrand = current.brands.find((brand) => brand.id === requestedBrandId)
         || current.brands.find((brand) => brand.id === current.activeBrandId)
         || current.brands[0]
@@ -226,6 +235,67 @@ app.post('/api/budgets/confirm', async (req, res) => {
   } catch (error) {
     console.error('Confirm budget error:', error)
     res.status(error?.code === 'DUPLICATE_BUDGET_NUMBER' ? 409 : 400).json({ ok: false, error: error.message })
+  }
+})
+
+
+app.post('/api/budgets/:budgetId/debit-note', async (req, res) => {
+  try {
+    const budgetId = String(req.params.budgetId || '').trim()
+    if (!budgetId) throw new Error('Falta identificar el presupuesto.')
+
+    const requestedAmount = Number(req.body?.amount)
+    const reason = String(req.body?.reason || '').trim() || 'Ajuste comercial asociado al presupuesto.'
+
+    const state = await updateBudgetsStore(req.user.email, (current) => {
+      const budgetIndex = current.generatedBudgets.findIndex((item) => item.id === budgetId)
+      if (budgetIndex === -1) throw new Error('No se encontró el presupuesto confirmado.')
+
+      const budget = current.generatedBudgets[budgetIndex]
+      if (budget.status !== 'confirmed') throw new Error('La nota de débito solo se puede generar sobre un presupuesto confirmado.')
+      if (budget.debitNote) {
+        const error = new Error('Este presupuesto ya tiene una nota de débito asociada.')
+        error.code = 'DEBIT_NOTE_EXISTS'
+        throw error
+      }
+
+      const amount = Number.isFinite(requestedAmount) && requestedAmount > 0
+        ? requestedAmount
+        : Number(budget.total || 0)
+
+      const debitNote = {
+        id: `debit-note-${Date.now()}`,
+        createdAt: new Date().toISOString(),
+        amount,
+        reason,
+        status: 'issued',
+      }
+
+      const updatedBudget = {
+        ...budget,
+        hasDebitNote: true,
+        debitNote,
+      }
+
+      const generatedBudgets = [...current.generatedBudgets]
+      generatedBudgets[budgetIndex] = updatedBudget
+
+      return {
+        ...current,
+        generatedBudgets,
+      }
+    })
+
+    const budget = state.generatedBudgets.find((item) => item.id === budgetId)
+    res.json({
+      ok: true,
+      budget,
+      generatedBudgets: state.generatedBudgets,
+      debitNote: budget?.debitNote || null,
+    })
+  } catch (error) {
+    console.error('Create budget debit note error:', error)
+    res.status(error?.code === 'DEBIT_NOTE_EXISTS' ? 409 : 400).json({ ok: false, error: error.message })
   }
 })
 

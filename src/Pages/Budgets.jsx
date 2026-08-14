@@ -10,6 +10,7 @@ const BUDGETS_KEY = 'panadero-generated-budgets'
 const MANUAL_PRODUCTS_KEY = 'panadero-budget-manual-products'
 const FX_KEY = 'panadero-budget-bna-fx'
 const DEFAULT_PROFIT_KEY = 'panadero-budget-default-profit'
+const CATALOG_OWNER_KEY = 'panadero-budget-catalog-owner'
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3001/api' : 'https://api.panaderoapp.com/api'
 
 const DEFAULT_BRAND = { id: 'brand-1', name: '', subtitle: '', validity: '10 días', conditions: '', logo: '', nextNumber: 1 }
@@ -47,6 +48,13 @@ function normalize(value) {
 
 function clean(value) {
   return String(value ?? '').trim()
+}
+
+function noticeTone(message) {
+  const text = String(message || '').toLowerCase()
+  if (/no se pudo|error|rechaz|fall|inválid|incorrect|vencid|duplicad.*existe/.test(text)) return 'error'
+  if (/seleccioná|agregá|ingresá|completá|pendiente|revisar|todavía|falta|antes de/.test(text)) return 'warning'
+  return 'success'
 }
 
 function parseDiscount(value) {
@@ -258,6 +266,43 @@ function Budgets() {
           localStorage.setItem(BUDGETS_KEY, JSON.stringify(data.generatedBudgets))
         }
 
+        // Clientes/productos pertenecen a la cuenta autenticada. La copia antigua de
+        // localStorage se migra una sola vez a la cuenta que ya usaba Panadero.
+        const accountId = String(data.account || '')
+        const catalogOwner = localStorage.getItem(CATALOG_OWNER_KEY) || ''
+        const serverCatalogReady = data.catalogInitialized === true
+
+        if (serverCatalogReady) {
+          const serverClients = Array.isArray(data.clients) ? data.clients : []
+          const serverProducts = Array.isArray(data.products) ? data.products : []
+          const serverManualProducts = Array.isArray(data.manualProducts) ? data.manualProducts : []
+          setClients(serverClients)
+          setSelectedClientId(serverClients[0]?.id || '')
+          setProducts(serverProducts)
+          setManualProducts(serverManualProducts)
+          localStorage.setItem(CLIENTS_KEY, JSON.stringify(serverClients))
+          localStorage.setItem(PRODUCTS_KEY, JSON.stringify(serverProducts))
+          localStorage.setItem(MANUAL_PRODUCTS_KEY, JSON.stringify(serverManualProducts))
+          if (accountId) localStorage.setItem(CATALOG_OWNER_KEY, accountId)
+        } else if (accountId && catalogOwner && catalogOwner !== accountId) {
+          // Una cuenta nueva nunca hereda el catálogo local de otra sesión.
+          setClients([])
+          setSelectedClientId('')
+          setProducts([])
+          setManualProducts([])
+          localStorage.setItem(CLIENTS_KEY, '[]')
+          localStorage.setItem(PRODUCTS_KEY, '[]')
+          localStorage.setItem(MANUAL_PRODUCTS_KEY, '[]')
+          localStorage.setItem(CATALOG_OWNER_KEY, accountId)
+        } else if (accountId) {
+          localStorage.setItem(CATALOG_OWNER_KEY, accountId)
+        }
+
+        if (serverCatalogReady && Number.isFinite(Number(data.defaultProfit))) {
+          setDefaultProfit(Number(data.defaultProfit))
+          localStorage.setItem(DEFAULT_PROFIT_KEY, String(data.defaultProfit))
+        }
+
       } catch (error) {
         console.warn('No se pudo cargar el estado online de presupuestos:', error)
       } finally {
@@ -267,6 +312,23 @@ function Budgets() {
     loadBudgetState()
     return () => { cancelled = true }
   }, [])
+
+  useEffect(() => {
+    if (!serverBudgetReady) return undefined
+    const timer = window.setTimeout(async () => {
+      try {
+        await fetch(`${API_BASE}/budgets/settings`, {
+          method: 'PUT',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clients, products, manualProducts, defaultProfit }),
+        })
+      } catch (error) {
+        console.warn('No se pudo guardar el catálogo online de presupuestos:', error)
+      }
+    }, 500)
+    return () => window.clearTimeout(timer)
+  }, [serverBudgetReady, clients, products, manualProducts, defaultProfit])
 
   useEffect(() => {
     const loadFx = async () => {
@@ -502,6 +564,56 @@ function Budgets() {
       }
       localStorage.setItem(BUDGETS_KEY, JSON.stringify(nextBudgets))
       setNotice(`Presupuesto N.º ${String(requestedNumber).padStart(6, '0')} confirmado y guardado online.`)
+    } catch (error) {
+      setNotice(error.message)
+    }
+  }
+
+  const createDebitNote = async (budget = confirmedBudget) => {
+    if (!budget || budget.status !== 'confirmed') {
+      setNotice('Primero confirmá el presupuesto para generar una nota de débito.')
+      return
+    }
+    if (budget.debitNote) {
+      setNotice('Este presupuesto ya tiene una nota de débito asociada.')
+      return
+    }
+
+    const reason = window.prompt('Motivo de la nota de débito:', 'Ajuste comercial')
+    if (reason === null) return
+
+    const amountInput = window.prompt(
+      'Importe de la nota de débito:',
+      String(Number(budget.total || 0).toFixed(2)).replace('.', ','),
+    )
+    if (amountInput === null) return
+    const amount = Number(String(amountInput).replace(/\./g, '').replace(',', '.'))
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setNotice('Ingresá un importe válido para la nota de débito.')
+      return
+    }
+
+    if (!window.confirm(`¿Generar nota de débito por ${formatCurrency(amount)} para el presupuesto N.º ${String(budget.number).padStart(6, '0')}?`)) return
+
+    try {
+      const response = await fetch(`${API_BASE}/budgets/${encodeURIComponent(budget.id)}/debit-note`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount, reason: clean(reason) || 'Ajuste comercial' }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || 'No se pudo generar la nota de débito.')
+
+      const updated = data.budget || budget
+      const nextBudgets = Array.isArray(data.generatedBudgets)
+        ? data.generatedBudgets
+        : generatedBudgets.map((item) => item.id === updated.id ? updated : item)
+      setGeneratedBudgets(nextBudgets)
+      setSelectedGeneratedId(updated.id)
+      setConfirmedBudget(updated)
+      localStorage.setItem(BUDGETS_KEY, JSON.stringify(nextBudgets))
+      setNotice(`Nota de débito registrada para el presupuesto N.º ${String(updated.number).padStart(6, '0')}.`)
     } catch (error) {
       setNotice(error.message)
     }
@@ -771,7 +883,7 @@ function Budgets() {
         </div>
       </header>
 
-      {notice && <button type="button" className="notice-bar" onClick={() => setNotice('')}><span>{notice}</span><strong>×</strong></button>}
+      {notice && <button type="button" className={`notice-bar ${noticeTone(notice)}`} onClick={() => setNotice('')}><span>{notice}</span><strong>×</strong></button>}
 
       <section className="budget-fx-strip">
         <div className="budget-fx-source"><span>Dólar BNA · Billete</span><small>{fxLoading ? 'Actualizando…' : fx.manual ? 'Cotización manual' : [fx.date, fx.time].filter(Boolean).join(' · ') || 'Última cotización disponible'}</small></div>
@@ -862,24 +974,34 @@ function Budgets() {
               <button type="button" className="brand-tab-edit" onClick={editActiveBrand}>Editar</button>
               <button type="button" className="brand-tab-add" onClick={openNewBrand}>＋</button>
             </div>
-            <div className="budget-number-panel">
+            <div className={`budget-number-panel ${confirmedBudget?.debitNote ? 'has-debit-note' : ''}`}>
               <div>
                 <span>N.º presupuesto</span>
-                <small>{confirmedBudget ? 'Presupuesto confirmado' : 'Podés editarlo antes de confirmar'}</small>
+                <small>{confirmedBudget?.debitNote ? 'Presupuesto con nota de débito' : confirmedBudget ? 'Presupuesto confirmado' : 'Podés editarlo antes de confirmar'}</small>
               </div>
-              <input
-                type="text"
-                inputMode="numeric"
-                pattern="[0-9]*"
-                value={String(confirmedBudget?.number || nextNumber).padStart(6, '0')}
-                disabled={Boolean(confirmedBudget)}
-                onChange={(event) => {
-                  const digits = event.target.value.replace(/\D/g, '')
-                  const value = Number(digits)
-                  if (Number.isInteger(value) && value > 0) setNextNumber(value)
-                }}
-                aria-label="Número de presupuesto"
-              />
+              <div className="budget-number-actions">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={String(confirmedBudget?.number || nextNumber).padStart(6, '0')}
+                  disabled={Boolean(confirmedBudget)}
+                  onChange={(event) => {
+                    const digits = event.target.value.replace(/\D/g, '')
+                    const value = Number(digits)
+                    if (Number.isInteger(value) && value > 0) setNextNumber(value)
+                  }}
+                  aria-label="Número de presupuesto"
+                />
+                <button
+                  type="button"
+                  className="ghost-button budget-debit-note-button"
+                  disabled={!confirmedBudget || Boolean(confirmedBudget?.debitNote)}
+                  onClick={() => createDebitNote(confirmedBudget)}
+                >
+                  {confirmedBudget?.debitNote ? 'Nota de débito emitida' : 'Nota de débito'}
+                </button>
+              </div>
             </div>
             <div className="budget-preview-scroll"><Preview brand={brand} client={clientDraft || selectedClient} items={items} number={confirmedBudget?.number || nextNumber} /></div>
           </section>
@@ -890,8 +1012,8 @@ function Budgets() {
             <div className="budget-column-heading"><div><span>Historial</span><strong>Presupuestos generados</strong></div><small>{generatedBudgets.length}</small></div>
             <div className="generated-budget-list">
               {generatedBudgets.length ? generatedBudgets.map((budget) => (
-                <button type="button" key={budget.id} className={`generated-budget-card ${selectedGenerated?.id === budget.id ? 'active' : ''}`} onClick={() => openGeneratedBudget(budget)}>
-                  <span>N.º {String(budget.number).padStart(6, '0')}</span>
+                <button type="button" key={budget.id} className={`generated-budget-card ${selectedGenerated?.id === budget.id ? 'active' : ''} ${budget.debitNote ? 'has-debit-note' : ''}`} onClick={() => openGeneratedBudget(budget)}>
+                  <span>N.º {String(budget.number).padStart(6, '0')} {budget.debitNote ? '· NOTA DE DÉBITO' : ''}</span>
                   <strong>{budget.client?.legalName || budget.client?.name || 'Cliente'}</strong>
                   <small>{new Date(budget.createdAt).toLocaleDateString('es-AR')} · {formatCurrency(budget.total)}</small>
                 </button>
@@ -899,7 +1021,7 @@ function Budgets() {
             </div>
           </aside>
           <section className="generated-budget-detail-column">
-            <div className="budget-column-heading"><div><span>Documento guardado</span><strong>{selectedGenerated ? `Presupuesto N.º ${String(selectedGenerated.number).padStart(6, '0')}` : 'Sin selección'}</strong></div>{selectedGenerated && <div className="budget-preview-actions"><button className="ghost-button" type="button" onClick={() => duplicateGeneratedBudget(selectedGenerated)}>Duplicar</button><button className="ghost-button" type="button" onClick={() => printTransport(selectedGenerated)}>Transporte</button><button className="primary-button" type="button" onClick={() => printConfirmedBudget(selectedGenerated)}>PDF / Descargar</button></div>}</div>
+            <div className="budget-column-heading"><div><span>Documento guardado</span><strong>{selectedGenerated ? `Presupuesto N.º ${String(selectedGenerated.number).padStart(6, '0')}` : 'Sin selección'}</strong>{selectedGenerated?.debitNote && <small className="budget-debit-note-summary">Nota de débito · {formatCurrency(selectedGenerated.debitNote.amount)} · {selectedGenerated.debitNote.reason}</small>}</div>{selectedGenerated && <div className="budget-preview-actions"><button className="ghost-button" type="button" onClick={() => duplicateGeneratedBudget(selectedGenerated)}>Duplicar</button><button className="ghost-button" type="button" onClick={() => printTransport(selectedGenerated)}>Transporte</button><button className="primary-button" type="button" onClick={() => printConfirmedBudget(selectedGenerated)}>PDF / Descargar</button></div>}</div>
             <div className="budget-preview-scroll generated-preview-scroll">{selectedGenerated ? <Preview brand={selectedGenerated.brand || brand} client={selectedGenerated.client} items={selectedGenerated.items || []} number={selectedGenerated.number} /> : <div className="budget-empty-editor">Confirmá un presupuesto para verlo en el historial.</div>}</div>
           </section>
         </div>
