@@ -299,6 +299,32 @@ app.post('/api/budgets/:budgetId/debit-note', async (req, res) => {
   }
 })
 
+app.post('/api/budgets/:budgetId/cancel', async (req, res) => {
+  try {
+    const budgetId = String(req.params.budgetId || '').trim()
+    const noteType = String(req.body?.noteType || '').trim().toLowerCase()
+    const reason = String(req.body?.reason || '').trim() || 'Cancelación comercial'
+    if (!budgetId) throw new Error('Falta identificar el presupuesto.')
+    if (!['credit', 'debit'].includes(noteType)) throw new Error('Elegí Nota de crédito o Nota de débito.')
+    const state = await updateBudgetsStore(req.user.email, (current) => {
+      const index = current.generatedBudgets.findIndex((item) => item.id === budgetId)
+      if (index === -1) throw new Error('No se encontró el presupuesto confirmado.')
+      const budget = current.generatedBudgets[index]
+      if (budget.status !== 'confirmed') throw new Error('Solo se puede cancelar un presupuesto confirmado.')
+      if (budget.cancelledAt) throw new Error('Este presupuesto ya está cancelado.')
+      const cancelledAt = new Date().toISOString()
+      const updated = { ...budget, cancelledAt, status: 'cancelled', cancellation: { id: `cancellation-${Date.now()}`, createdAt: cancelledAt, noteType, reason, amount: Number(budget.total || 0), status: 'registered' } }
+      const generatedBudgets = [...current.generatedBudgets]
+      generatedBudgets[index] = updated
+      return { ...current, generatedBudgets }
+    })
+    res.json({ ok: true, budget: state.generatedBudgets.find((item) => item.id === budgetId), generatedBudgets: state.generatedBudgets })
+  } catch (error) {
+    console.error('Cancel budget error:', error)
+    res.status(400).json({ ok: false, error: error.message })
+  }
+})
+
 app.get('/api/arca/status', async (_req, res) => {
   try {
     res.json(await getArcaStatus())

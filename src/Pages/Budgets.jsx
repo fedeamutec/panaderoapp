@@ -125,16 +125,18 @@ function budgetTotal(items) {
   return items.reduce((sum, item) => sum + Number(item.subtotal || 0), 0)
 }
 
-function Preview({ brand, client, items, number, draft = false }) {
+function Preview({ brand, client, items, number, draft = false, documentType = 'budget' }) {
   const total = items.reduce((sum, item) => sum + item.subtotal, 0)
+  const documentLabel = documentType === 'invoice-a' ? 'FACTURA A' : documentType === 'invoice-b' ? 'FACTURA B' : 'PRESUPUESTO'
+  const subtitle = documentType === 'budget' ? (brand.subtitle || 'Presupuesto comercial') : 'Vista previa · emisión ARCA pendiente'
   return (
     <div className="budget-paper">
       <header className="budget-paper-header">
         <div className="budget-paper-brand">
           {brand.logo && <img src={brand.logo} alt="" />}
-          <div><strong>{brand.name || 'Nombre de fantasía'}</strong><small>{brand.subtitle || 'Presupuesto comercial'}</small></div>
+          <div><strong>{brand.name || 'Nombre de fantasía'}</strong><small>{subtitle}</small></div>
         </div>
-        <div className="budget-paper-number"><span>{draft ? 'BORRADOR DE PRESUPUESTO' : 'PRESUPUESTO'}</span><strong>N.º {String(number).padStart(6, '0')}</strong><small>{new Date().toLocaleDateString('es-AR')}</small></div>
+        <div className="budget-paper-number"><span>{draft ? `BORRADOR DE ${documentLabel}` : documentLabel}</span><strong>N.º {String(number).padStart(6, '0')}</strong><small>{new Date().toLocaleDateString('es-AR')}</small></div>
       </header>
 
       <section className="budget-paper-client">
@@ -218,6 +220,7 @@ function Budgets() {
   const [productQuery, setProductQuery] = useState('')
   const [priceQuery, setPriceQuery] = useState('')
   const [items, setItems] = useState([])
+  const [documentType, setDocumentType] = useState('budget')
   const [generatedBudgets, setGeneratedBudgets] = useState(() => readStored(BUDGETS_KEY, []))
   const [nextNumber, setNextNumber] = useState(1)
   const [serverBudgetReady, setServerBudgetReady] = useState(false)
@@ -619,6 +622,41 @@ function Budgets() {
     }
   }
 
+  const cancelGeneratedBudget = async (budget) => {
+    if (!budget || budget.status !== 'confirmed') {
+      setNotice('Solo se puede cancelar un presupuesto confirmado.')
+      return
+    }
+    if (budget.cancelledAt) {
+      setNotice('Este presupuesto ya está cancelado.')
+      return
+    }
+    const choice = window.prompt('Al cancelar, elegí el comprobante asociado: escribí C para Nota de crédito o D para Nota de débito.', 'C')
+    if (choice === null) return
+    const normalized = clean(choice).toUpperCase()
+    const noteType = normalized.startsWith('D') ? 'debit' : normalized.startsWith('C') ? 'credit' : ''
+    if (!noteType) {
+      setNotice('Elegí C para Nota de crédito o D para Nota de débito.')
+      return
+    }
+    const reason = window.prompt('Motivo de la cancelación:', 'Cancelación comercial')
+    if (reason === null) return
+    if (!window.confirm(`¿Cancelar el presupuesto N.º ${String(budget.number).padStart(6, '0')}? El presupuesto seguirá visible en el historial.`)) return
+    try {
+      const response = await fetch(`${API_BASE}/budgets/${encodeURIComponent(budget.id)}/cancel`, {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ noteType, reason: clean(reason) || 'Cancelación comercial' }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || 'No se pudo cancelar el presupuesto.')
+      const nextBudgets = data.generatedBudgets || generatedBudgets
+      setGeneratedBudgets(nextBudgets)
+      setSelectedGeneratedId(budget.id)
+      localStorage.setItem(BUDGETS_KEY, JSON.stringify(nextBudgets))
+      setNotice(`Presupuesto N.º ${String(budget.number).padStart(6, '0')} cancelado correctamente.`)
+    } catch (error) { setNotice(error.message) }
+  }
+
   const openGeneratedBudget = (budget) => {
     setSelectedGeneratedId(budget.id)
   }
@@ -886,6 +924,11 @@ function Budgets() {
       {notice && <button type="button" className={`notice-bar ${noticeTone(notice)}`} onClick={() => setNotice('')}><span>{notice}</span><strong>×</strong></button>}
 
       <section className="budget-fx-strip">
+        <div className="commercial-document-tabs" aria-label="Tipo de documento">
+          <button type="button" className={documentType === 'budget' ? 'active' : ''} onClick={() => setDocumentType('budget')}>Presupuesto</button>
+          <button type="button" className={documentType === 'invoice-a' ? 'active' : ''} onClick={() => setDocumentType('invoice-a')}>Factura A</button>
+          <button type="button" className={documentType === 'invoice-b' ? 'active' : ''} onClick={() => setDocumentType('invoice-b')}>Factura B</button>
+        </div>
         <div className="budget-fx-source"><span>Dólar BNA · Billete</span><small>{fxLoading ? 'Actualizando…' : fx.manual ? 'Cotización manual' : [fx.date, fx.time].filter(Boolean).join(' · ') || 'Última cotización disponible'}</small></div>
         <div className="budget-fx-value"><span>Compra</span><strong>{fx.buy ? formatCurrency(fx.buy) : '—'}</strong></div>
         <label className="budget-fx-value editable"><span>Venta usada</span><input type="number" min="0" step="0.01" value={fx.sell || ''} onChange={(event) => updateFxSell(event.target.value)} placeholder="Cotización" /></label>
@@ -968,7 +1011,7 @@ function Budgets() {
           </section>
 
           <section className="budget-preview-column">
-            <div className="budget-column-heading budget-preview-heading"><div><span>Documento</span><strong>Vista previa</strong></div><div className="budget-preview-actions"><button className="ghost-button" type="button" onClick={printDraft}>Guardar borrador</button><button className="ghost-button budget-confirm-button" type="button" onClick={confirmBudget}>Confirmar</button><button className="ghost-button" type="button" disabled={!confirmedBudget} onClick={() => printTransport(confirmedBudget)}>Transporte</button><button className="primary-button" type="button" disabled={!confirmedBudget} onClick={() => printConfirmedBudget(confirmedBudget)}>PDF / Descargar</button></div></div>
+            <div className="budget-column-heading budget-preview-heading"><div><span>Documento</span><strong>Vista previa</strong></div><div className="budget-preview-actions"><button className="ghost-button" type="button" onClick={printDraft}>Guardar borrador</button><button className="ghost-button budget-confirm-button" type="button" onClick={documentType === 'budget' ? confirmBudget : () => setNotice('Factura A/B preparada visualmente. La emisión fiscal se habilitará al conectarla con ARCA.')}>{documentType === 'budget' ? 'Confirmar' : 'Emitir'}</button><button className="ghost-button" type="button" disabled={!confirmedBudget} onClick={() => printTransport(confirmedBudget)}>Transporte</button><button className="primary-button" type="button" disabled={!confirmedBudget} onClick={() => printConfirmedBudget(confirmedBudget)}>PDF / Descargar</button></div></div>
             <div className="budget-brand-tabs" aria-label="Marcas de presupuesto">
               {brands.map((item) => <button key={item.id} type="button" className={item.id === brand.id ? 'active' : ''} onClick={() => selectBrand(item.id)}><span>{item.name || 'Sin nombre'}</span><small>N.º {String(item.id === brand.id ? nextNumber : item.nextNumber || 1).padStart(6, '0')}</small></button>)}
               <button type="button" className="brand-tab-edit" onClick={editActiveBrand}>Editar</button>
@@ -1003,7 +1046,7 @@ function Budgets() {
                 </button>
               </div>
             </div>
-            <div className="budget-preview-scroll"><Preview brand={brand} client={clientDraft || selectedClient} items={items} number={confirmedBudget?.number || nextNumber} /></div>
+            <div className="budget-preview-scroll"><Preview brand={brand} client={clientDraft || selectedClient} items={items} number={confirmedBudget?.number || nextNumber} documentType={documentType} /></div>
           </section>
         </div>
       ) : (
@@ -1012,8 +1055,8 @@ function Budgets() {
             <div className="budget-column-heading"><div><span>Historial</span><strong>Presupuestos generados</strong></div><small>{generatedBudgets.length}</small></div>
             <div className="generated-budget-list">
               {generatedBudgets.length ? generatedBudgets.map((budget) => (
-                <button type="button" key={budget.id} className={`generated-budget-card ${selectedGenerated?.id === budget.id ? 'active' : ''} ${budget.debitNote ? 'has-debit-note' : ''}`} onClick={() => openGeneratedBudget(budget)}>
-                  <span>N.º {String(budget.number).padStart(6, '0')} {budget.debitNote ? '· NOTA DE DÉBITO' : ''}</span>
+                <button type="button" key={budget.id} className={`generated-budget-card ${selectedGenerated?.id === budget.id ? 'active' : ''} ${budget.debitNote ? 'has-debit-note' : ''} ${budget.cancelledAt ? 'cancelled' : ''}`} onClick={() => openGeneratedBudget(budget)}>
+                  <span>N.º {String(budget.number).padStart(6, '0')} {budget.cancelledAt ? `· CANCELADO · ${budget.cancellation?.noteType === 'debit' ? 'NOTA DE DÉBITO' : 'NOTA DE CRÉDITO'}` : budget.debitNote ? '· NOTA DE DÉBITO' : ''}</span>
                   <strong>{budget.client?.legalName || budget.client?.name || 'Cliente'}</strong>
                   <small>{new Date(budget.createdAt).toLocaleDateString('es-AR')} · {formatCurrency(budget.total)}</small>
                 </button>
@@ -1021,7 +1064,7 @@ function Budgets() {
             </div>
           </aside>
           <section className="generated-budget-detail-column">
-            <div className="budget-column-heading"><div><span>Documento guardado</span><strong>{selectedGenerated ? `Presupuesto N.º ${String(selectedGenerated.number).padStart(6, '0')}` : 'Sin selección'}</strong>{selectedGenerated?.debitNote && <small className="budget-debit-note-summary">Nota de débito · {formatCurrency(selectedGenerated.debitNote.amount)} · {selectedGenerated.debitNote.reason}</small>}</div>{selectedGenerated && <div className="budget-preview-actions"><button className="ghost-button" type="button" onClick={() => duplicateGeneratedBudget(selectedGenerated)}>Duplicar</button><button className="ghost-button" type="button" onClick={() => printTransport(selectedGenerated)}>Transporte</button><button className="primary-button" type="button" onClick={() => printConfirmedBudget(selectedGenerated)}>PDF / Descargar</button></div>}</div>
+            <div className="budget-column-heading"><div><span>Documento guardado</span><strong>{selectedGenerated ? `Presupuesto N.º ${String(selectedGenerated.number).padStart(6, '0')}` : 'Sin selección'}</strong>{selectedGenerated?.debitNote && <small className="budget-debit-note-summary">Nota de débito · {formatCurrency(selectedGenerated.debitNote.amount)} · {selectedGenerated.debitNote.reason}</small>}</div>{selectedGenerated && <div className="budget-preview-actions"><button className="ghost-button" type="button" onClick={() => duplicateGeneratedBudget(selectedGenerated)}>Duplicar</button><button className="ghost-button budget-cancel-button" type="button" disabled={Boolean(selectedGenerated.cancelledAt)} onClick={() => cancelGeneratedBudget(selectedGenerated)}>{selectedGenerated.cancelledAt ? 'Cancelado' : 'Cancelar'}</button><button className="ghost-button" type="button" onClick={() => printTransport(selectedGenerated)}>Transporte</button><button className="primary-button" type="button" onClick={() => printConfirmedBudget(selectedGenerated)}>PDF / Descargar</button></div>}</div>
             <div className="budget-preview-scroll generated-preview-scroll">{selectedGenerated ? <Preview brand={selectedGenerated.brand || brand} client={selectedGenerated.client} items={selectedGenerated.items || []} number={selectedGenerated.number} /> : <div className="budget-empty-editor">Confirmá un presupuesto para verlo en el historial.</div>}</div>
           </section>
         </div>

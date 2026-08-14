@@ -2047,3 +2047,14 @@ body,
   .multi-brand-settings .brand-conditions { grid-column:1 / -1; }
   .brand-settings-actions { grid-column:1 / -1; }
 }
+
+/* Documentos comerciales: selector y cancelaciones */
+.commercial-document-tabs{display:flex;align-items:center;gap:5px;padding-right:16px;border-right:1px solid var(--line)}
+.commercial-document-tabs button{height:34px;padding:0 13px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--muted);font:inherit;font-size:calc(9px * var(--font-scale));font-weight:650;cursor:pointer}
+.commercial-document-tabs button:hover{color:var(--text);background:var(--panel-hover)}
+.commercial-document-tabs button.active{color:var(--text);border-color:color-mix(in srgb,var(--accent) 60%,var(--line));background:color-mix(in srgb,var(--accent) 10%,var(--panel));box-shadow:inset 0 -2px 0 var(--accent)}
+.generated-budget-card.cancelled{background:color-mix(in srgb,#c74747 10%,transparent);box-shadow:inset 2px 0 0 #c74747}
+.generated-budget-card.cancelled span,.generated-budget-card.cancelled strong{color:#e97878}
+.generated-budget-card.cancelled small{color:color-mix(in srgb,#e97878 70%,var(--muted))}
+.budget-cancel-button:not(:disabled){border-color:color-mix(in srgb,#c74747 55%,var(--line));color:#e97878}
+@media(max-width:1200px){.commercial-document-tabs{width:100%;border-right:0;padding-right:0}.budget-fx-strip{align-items:flex-start}}
