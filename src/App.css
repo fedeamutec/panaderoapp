@@ -409,6 +409,42 @@ body,
 .registry-header p { margin: 8px 0 0; color: var(--muted); font-size: calc(10px * var(--font-scale)); max-width: 520px; line-height: 1.5; }
 .registry-refresh { flex: 0 0 auto; min-width: 118px; }
 
+.registry-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-end;
+  gap: 8px;
+}
+.registry-month-picker {
+  display: grid;
+  gap: 5px;
+  color: var(--subtle);
+  font-size: calc(8px * var(--font-scale));
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.registry-month-picker input {
+  height: 34px;
+  min-width: 150px;
+  padding: 0 10px;
+  color: var(--text);
+  color-scheme: dark;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  outline: none;
+  background: var(--panel-2);
+  font: inherit;
+  font-size: calc(9px * var(--font-scale));
+  letter-spacing: 0;
+  text-transform: none;
+}
+.registry-month-picker input:focus {
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.registry-export { min-width: 132px; }
+
 .registry-stats {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1302,7 +1338,10 @@ body,
 }
 @media (max-width: 720px) {
   .registry-header { flex-direction: column; }
-  .registry-refresh { width: 100%; }
+  .registry-header-actions { width: 100%; flex-wrap: wrap; }
+  .registry-month-picker { flex: 1 1 160px; }
+  .registry-month-picker input { width: 100%; }
+  .registry-refresh, .registry-export { flex: 1 1 140px; }
   .registry-stats { grid-template-columns: 1fr; }
 }
 @media (max-width: 720px) { .invoice-sequence { grid-template-columns: 1fr; } }
@@ -2058,3 +2097,28 @@ body,
 .generated-budget-card.cancelled small{color:color-mix(in srgb,#e97878 70%,var(--muted))}
 .budget-cancel-button:not(:disabled){border-color:color-mix(in srgb,#c74747 55%,var(--line));color:#e97878}
 @media(max-width:1200px){.commercial-document-tabs{width:100%;border-right:0;padding-right:0}.budget-fx-strip{align-items:flex-start}}
+
+
+/* Facturación general ARCA */
+.fiscal-number-panel .fiscal-sequence-number{
+  display:inline-flex;
+  min-width:170px;
+  height:36px;
+  align-items:center;
+  justify-content:center;
+  padding:0 12px;
+  border:1px solid color-mix(in srgb,var(--accent) 48%,var(--line));
+  border-radius:8px;
+  background:var(--bg);
+  color:var(--text);
+  font-size:calc(12px * var(--font-scale));
+  font-weight:750;
+  letter-spacing:.04em;
+}
+.fiscal-number-panel.authorized{
+  background:color-mix(in srgb,var(--green) 8%,var(--panel));
+}
+.fiscal-number-panel.authorized .fiscal-sequence-number{
+  border-color:color-mix(in srgb,var(--green) 58%,var(--line));
+  color:var(--green);
+}

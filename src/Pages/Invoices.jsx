@@ -43,6 +43,173 @@ function invoiceTypeKey(typeLabel) {
   return 'other'
 }
 
+
+function invoiceFiscalDate(invoice = {}) {
+  const raw = String(invoice.voucher?.date || '').trim()
+  if (/^\d{8}$/.test(raw)) {
+    const year = raw.slice(0, 4)
+    const month = raw.slice(4, 6)
+    const day = raw.slice(6, 8)
+    return { iso: `${year}-${month}-${day}`, monthKey: `${year}-${month}` }
+  }
+
+  const fallback = invoice.createdAt ? new Date(invoice.createdAt) : null
+  if (!fallback || Number.isNaN(fallback.getTime())) return { iso: '', monthKey: '' }
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Argentina/Buenos_Aires',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  })
+  const parts = Object.fromEntries(
+    formatter.formatToParts(fallback)
+      .filter((part) => part.type !== 'literal')
+      .map((part) => [part.type, part.value]),
+  )
+  return {
+    iso: `${parts.year}-${parts.month}-${parts.day}`,
+    monthKey: `${parts.year}-${parts.month}`,
+  }
+}
+
+function formatIsoDate(value) {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : '—'
+}
+
+function xmlEscape(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;')
+}
+
+function excelCell(value, type = 'String', style = '') {
+  const styleAttr = style ? ` ss:StyleID="${style}"` : ''
+  const safeValue = type === 'Number' ? Number(value || 0) : xmlEscape(value)
+  return `<Cell${styleAttr}><Data ss:Type="${type}">${safeValue}</Data></Cell>`
+}
+
+function buildMonthlyExcelXml(invoices, monthKey) {
+  const monthLabel = new Intl.DateTimeFormat('es-AR', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+    .format(new Date(`${monthKey}-01T12:00:00Z`))
+  const totals = invoices.reduce((acc, invoice) => {
+    const amount = Number(invoice.voucher?.amount || 0)
+    const vat = Number(invoice.voucher?.vatAmount || 0)
+    const net = Number(invoice.voucher?.netAmount ?? (amount - vat))
+    const typeKey = invoiceTypeKey(invoice.voucher?.voucherTypeDescription)
+    acc.count += 1
+    acc.total += amount
+    acc.vat += vat
+    acc.net += net
+    if (typeKey === 'A' || typeKey === 'B' || typeKey === 'C') acc.byType[typeKey] += 1
+    return acc
+  }, { count: 0, total: 0, vat: 0, net: 0, byType: { A: 0, B: 0, C: 0 } })
+
+  const summaryRows = [
+    [excelCell('PANADERO · REPORTE MENSUAL DE FACTURACIÓN', 'String', 'Title')],
+    [excelCell('Período', 'String', 'Header'), excelCell(monthLabel)],
+    [excelCell('Comprobantes', 'String', 'Header'), excelCell(totals.count, 'Number', 'Integer')],
+    [excelCell('Factura A', 'String', 'Header'), excelCell(totals.byType.A, 'Number', 'Integer')],
+    [excelCell('Factura B', 'String', 'Header'), excelCell(totals.byType.B, 'Number', 'Integer')],
+    [excelCell('Factura C', 'String', 'Header'), excelCell(totals.byType.C, 'Number', 'Integer')],
+    [excelCell('Neto gravado', 'String', 'Header'), excelCell(totals.net, 'Number', 'Currency')],
+    [excelCell('IVA', 'String', 'Header'), excelCell(totals.vat, 'Number', 'Currency')],
+    [excelCell('Total facturado', 'String', 'Header'), excelCell(totals.total, 'Number', 'Currency')],
+  ]
+
+  const headers = [
+    'Fecha', 'Tipo', 'Punto de venta', 'N.º factura', 'Cliente', 'Tipo doc.', 'CUIT / DNI',
+    'Jurisdicción', 'Neto gravado', 'IVA %', 'Importe IVA', 'Total', 'CAE', 'Vto. CAE', 'Origen', 'Venta / ID',
+  ]
+
+  const detailRows = invoices
+    .slice()
+    .sort((a, b) => {
+      const dateA = invoiceFiscalDate(a).iso
+      const dateB = invoiceFiscalDate(b).iso
+      return dateA.localeCompare(dateB) || Number(a.voucher?.voucherNumber || 0) - Number(b.voucher?.voucherNumber || 0)
+    })
+    .map((invoice) => {
+      const fiscalDate = invoiceFiscalDate(invoice)
+      const amount = Number(invoice.voucher?.amount || 0)
+      const vat = Number(invoice.voucher?.vatAmount || 0)
+      const net = Number(invoice.voucher?.netAmount ?? (amount - vat))
+      const source = invoice.source === 'commercial' ? 'Facturación General' : 'Mercado Libre'
+      const identifier = invoice.source === 'commercial' ? (invoice.id || '') : (invoice.orderId || '')
+      return [
+        excelCell(formatIsoDate(fiscalDate.iso)),
+        excelCell(invoice.voucher?.voucherTypeDescription || 'Factura'),
+        excelCell(invoice.voucher?.pointOfSale || 3, 'Number', 'Integer'),
+        excelCell(invoice.voucher?.formattedNumber || ''),
+        excelCell(invoice.buyer?.name || 'Consumidor final'),
+        excelCell(invoice.buyer?.documentType || ''),
+        excelCell(invoice.buyer?.documentNumber || invoice.voucher?.documentNumber || ''),
+        excelCell(invoice.saleSnapshot?.address?.state || 'Argentina'),
+        excelCell(net, 'Number', 'Currency'),
+        excelCell(invoice.voucher?.vatRate || 0, 'Number', 'PercentNumber'),
+        excelCell(vat, 'Number', 'Currency'),
+        excelCell(amount, 'Number', 'Currency'),
+        excelCell(invoice.cae || ''),
+        excelCell(invoice.caeExpirationDate || ''),
+        excelCell(source),
+        excelCell(identifier),
+      ]
+    })
+
+  const totalsRow = [
+    excelCell('TOTAL DEL MES', 'String', 'TotalLabel'),
+    ...Array.from({ length: 7 }, () => excelCell('')),
+    excelCell(totals.net, 'Number', 'TotalCurrency'),
+    excelCell(''),
+    excelCell(totals.vat, 'Number', 'TotalCurrency'),
+    excelCell(totals.total, 'Number', 'TotalCurrency'),
+    ...Array.from({ length: 4 }, () => excelCell('')),
+  ]
+
+  const rowXml = (cells) => `<Row>${cells.join('')}</Row>`
+  const detailHeader = rowXml(headers.map((header) => excelCell(header, 'String', 'Header')))
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+ <DocumentProperties xmlns="urn:schemas-microsoft-com:office:office"><Author>Panadero</Author><Title>Reporte mensual de facturación</Title></DocumentProperties>
+ <Styles>
+  <Style ss:ID="Default" ss:Name="Normal"><Alignment ss:Vertical="Bottom"/><Font ss:FontName="Arial" ss:Size="10"/></Style>
+  <Style ss:ID="Title"><Font ss:FontName="Arial" ss:Size="14" ss:Bold="1"/></Style>
+  <Style ss:ID="Header"><Font ss:Bold="1"/><Interior ss:Color="#E7E6E6" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/></Borders></Style>
+  <Style ss:ID="Currency"><NumberFormat ss:Format="$#,##0.00"/></Style>
+  <Style ss:ID="Integer"><NumberFormat ss:Format="0"/></Style>
+  <Style ss:ID="PercentNumber"><NumberFormat ss:Format="0.00"/></Style>
+  <Style ss:ID="TotalLabel"><Font ss:Bold="1"/><Borders><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2"/></Borders></Style>
+  <Style ss:ID="TotalCurrency"><Font ss:Bold="1"/><NumberFormat ss:Format="$#,##0.00"/><Borders><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2"/></Borders></Style>
+ </Styles>
+ <Worksheet ss:Name="Resumen">
+  <Table>
+   <Column ss:Width="150"/><Column ss:Width="150"/>
+   ${summaryRows.map(rowXml).join('\n   ')}
+  </Table>
+ </Worksheet>
+ <Worksheet ss:Name="Facturas">
+  <Table>
+   <Column ss:Width="75"/><Column ss:Width="85"/><Column ss:Width="75"/><Column ss:Width="100"/>
+   <Column ss:Width="180"/><Column ss:Width="65"/><Column ss:Width="95"/><Column ss:Width="110"/>
+   <Column ss:Width="95"/><Column ss:Width="55"/><Column ss:Width="95"/><Column ss:Width="95"/>
+   <Column ss:Width="115"/><Column ss:Width="80"/><Column ss:Width="110"/><Column ss:Width="125"/>
+   ${detailHeader}
+   ${detailRows.map(rowXml).join('\n   ')}
+   ${rowXml(totalsRow)}
+  </Table>
+  <AutoFilter x:Range="R1C1:R${detailRows.length + 1}C16" xmlns="urn:schemas-microsoft-com:office:excel"/>
+ </Worksheet>
+</Workbook>`
+}
+
 function Invoices({ onNavigateToSales }) {
   const [account, setAccount] = useState({ connected: false, nickname: '' })
   const [invoices, setInvoices] = useState([])
@@ -51,6 +218,7 @@ function Invoices({ onNavigateToSales }) {
   const [notice, setNotice] = useState('')
   const [query, setQuery] = useState('')
   const [typeFilter, setTypeFilter] = useState('all')
+  const [reportMonth, setReportMonth] = useState('')
 
   const loadInvoices = useCallback(async ({ refresh = false } = {}) => {
     if (refresh) setRefreshing(true)
@@ -84,7 +252,7 @@ function Invoices({ onNavigateToSales }) {
 
   const rows = useMemo(
     () => [...invoices].reverse().map((invoice) => ({
-      id: String(invoice.orderId),
+      id: String(invoice.orderId || invoice.id || ''),
       date: invoice.createdAt,
       dateLabel: formatDate(invoice.createdAt),
       customer: invoice.buyer?.name || 'Consumidor final',
@@ -96,8 +264,25 @@ function Invoices({ onNavigateToSales }) {
       vatAmount: Number(invoice.voucher?.vatAmount || 0),
       total: Number(invoice.voucher?.amount || 0),
       cae: invoice.cae || '',
+      pdfPath: invoice.source === 'commercial'
+        ? `/arca/commercial-invoices/${encodeURIComponent(invoice.id || '')}/pdf`
+        : `/arca/sale-invoices/${encodeURIComponent(invoice.orderId || '')}/pdf`,
     })),
     [invoices],
+  )
+
+  const reportMonths = useMemo(() => {
+    const months = [...new Set(invoices.map((invoice) => invoiceFiscalDate(invoice).monthKey).filter(Boolean))]
+    return months.sort((a, b) => b.localeCompare(a))
+  }, [invoices])
+
+  const effectiveReportMonth = reportMonth && reportMonths.includes(reportMonth)
+    ? reportMonth
+    : (reportMonths[0] || '')
+
+  const monthlyInvoices = useMemo(
+    () => invoices.filter((invoice) => invoiceFiscalDate(invoice).monthKey === effectiveReportMonth),
+    [effectiveReportMonth, invoices],
   )
 
   const summary = useMemo(() => {
@@ -133,6 +318,30 @@ function Invoices({ onNavigateToSales }) {
       return matchesType && matchesQuery
     })
   }, [query, rows, typeFilter])
+
+  const handleMonthlyExcel = () => {
+    if (!effectiveReportMonth || !monthlyInvoices.length) {
+      setNotice('No hay facturas emitidas para el mes seleccionado.')
+      return
+    }
+
+    try {
+      const xml = buildMonthlyExcelXml(monthlyInvoices, effectiveReportMonth)
+      const blob = new Blob([xml], { type: 'application/vnd.ms-excel;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `Panadero-Facturacion-${effectiveReportMonth}.xls`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+      setNotice(`Reporte mensual ${effectiveReportMonth} descargado correctamente.`)
+    } catch (error) {
+      console.error('Monthly invoice export error:', error)
+      setNotice('No se pudo generar el Excel mensual.')
+    }
+  }
 
   const handleConnect = async () => {
     setRefreshing(true)
@@ -192,15 +401,37 @@ function Invoices({ onNavigateToSales }) {
             <h2 id="registry-title">Comprobantes emitidos</h2>
             <p>Facturas autorizadas con CAE desde el punto de venta 0003.</p>
           </div>
-          <button
-            type="button"
-            className="ghost-button registry-refresh"
-            onClick={handleRefresh}
-            disabled={isLoading || isBusy}
-            aria-busy={isBusy}
-          >
-            {isBusy ? 'Actualizando…' : '↻ Actualizar'}
-          </button>
+          <div className="registry-header-actions">
+            <label className="registry-month-picker">
+              <span>Reporte mensual</span>
+              <input
+                type="month"
+                value={effectiveReportMonth}
+                onChange={(event) => setReportMonth(event.target.value)}
+                min={reportMonths.at(-1) || undefined}
+                max={reportMonths[0] || undefined}
+                disabled={isLoading || !reportMonths.length}
+              />
+            </label>
+            <button
+              type="button"
+              className="ghost-button registry-export"
+              onClick={handleMonthlyExcel}
+              disabled={isLoading || isBusy || !monthlyInvoices.length}
+              title={monthlyInvoices.length ? `${monthlyInvoices.length} comprobantes en el mes` : 'Sin comprobantes para este mes'}
+            >
+              ↓ Excel mensual
+            </button>
+            <button
+              type="button"
+              className="ghost-button registry-refresh"
+              onClick={handleRefresh}
+              disabled={isLoading || isBusy}
+              aria-busy={isBusy}
+            >
+              {isBusy ? 'Actualizando…' : '↻ Actualizar'}
+            </button>
+          </div>
         </div>
 
         {!isLoading && rows.length > 0 && (
@@ -316,7 +547,7 @@ function Invoices({ onNavigateToSales }) {
                       <div className="registry-actions">
                         <a
                           className="registry-action-link"
-                          href={`${API_BASE}/arca/sale-invoices/${encodeURIComponent(row.id)}/pdf`}
+                          href={`${API_BASE}${row.pdfPath}`}
                           target="_blank"
                           rel="noreferrer"
                           aria-label={`Ver PDF de ${row.number}`}
@@ -325,7 +556,7 @@ function Invoices({ onNavigateToSales }) {
                         </a>
                         <a
                           className="registry-action-link primary"
-                          href={`${API_BASE}/arca/sale-invoices/${encodeURIComponent(row.id)}/pdf?download=1`}
+                          href={`${API_BASE}${row.pdfPath}?download=1`}
                           aria-label={`Descargar PDF de ${row.number}`}
                         >
                           PDF
