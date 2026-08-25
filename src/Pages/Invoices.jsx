@@ -93,36 +93,34 @@ function excelCell(value, type = 'String', style = '') {
 }
 
 function buildMonthlyExcelXml(invoices, monthKey) {
-  const monthLabel = new Intl.DateTimeFormat('es-AR', { month: 'long', year: 'numeric', timeZone: 'UTC' })
-    .format(new Date(`${monthKey}-01T12:00:00Z`))
   const totals = invoices.reduce((acc, invoice) => {
     const amount = Number(invoice.voucher?.amount || 0)
     const vat = Number(invoice.voucher?.vatAmount || 0)
     const net = Number(invoice.voucher?.netAmount ?? (amount - vat))
-    const typeKey = invoiceTypeKey(invoice.voucher?.voucherTypeDescription)
-    acc.count += 1
     acc.total += amount
     acc.vat += vat
     acc.net += net
-    if (typeKey === 'A' || typeKey === 'B' || typeKey === 'C') acc.byType[typeKey] += 1
     return acc
-  }, { count: 0, total: 0, vat: 0, net: 0, byType: { A: 0, B: 0, C: 0 } })
-
-  const summaryRows = [
-    [excelCell('PANADERO · REPORTE MENSUAL DE FACTURACIÓN', 'String', 'Title')],
-    [excelCell('Período', 'String', 'Header'), excelCell(monthLabel)],
-    [excelCell('Comprobantes', 'String', 'Header'), excelCell(totals.count, 'Number', 'Integer')],
-    [excelCell('Factura A', 'String', 'Header'), excelCell(totals.byType.A, 'Number', 'Integer')],
-    [excelCell('Factura B', 'String', 'Header'), excelCell(totals.byType.B, 'Number', 'Integer')],
-    [excelCell('Factura C', 'String', 'Header'), excelCell(totals.byType.C, 'Number', 'Integer')],
-    [excelCell('Neto gravado', 'String', 'Header'), excelCell(totals.net, 'Number', 'Currency')],
-    [excelCell('IVA', 'String', 'Header'), excelCell(totals.vat, 'Number', 'Currency')],
-    [excelCell('Total facturado', 'String', 'Header'), excelCell(totals.total, 'Number', 'Currency')],
-  ]
+  }, { total: 0, vat: 0, net: 0 })
 
   const headers = [
-    'Fecha', 'Tipo', 'Punto de venta', 'N.º factura', 'Cliente', 'Tipo doc.', 'CUIT / DNI',
-    'Jurisdicción', 'Neto gravado', 'IVA %', 'Importe IVA', 'Total', 'CAE', 'Vto. CAE', 'Origen', 'Venta / ID',
+    'Fecha',
+    'Tipo',
+    'Punto de venta',
+    'N.º factura',
+    'Cliente',
+    'Tipo doc.',
+    'CUIT / DNI',
+    'Jurisdicción',
+    'Detalle / productos',
+    'Neto gravado',
+    'IVA %',
+    'Importe IVA',
+    'Total',
+    'CAE',
+    'Vto. CAE',
+    'Origen',
+    'Venta / ID',
   ]
 
   const detailRows = invoices
@@ -139,6 +137,16 @@ function buildMonthlyExcelXml(invoices, monthKey) {
       const net = Number(invoice.voucher?.netAmount ?? (amount - vat))
       const source = invoice.source === 'commercial' ? 'Facturación General' : 'Mercado Libre'
       const identifier = invoice.source === 'commercial' ? (invoice.id || '') : (invoice.orderId || '')
+      const products = Array.isArray(invoice.saleSnapshot?.items)
+        ? invoice.saleSnapshot.items
+            .map((item) => {
+              const quantity = Number(item.quantity || 1)
+              const title = item.title || item.name || item.description || 'Producto'
+              return `${quantity} x ${title}`
+            })
+            .join(' | ')
+        : ''
+
       return [
         excelCell(formatIsoDate(fiscalDate.iso)),
         excelCell(invoice.voucher?.voucherTypeDescription || 'Factura'),
@@ -148,6 +156,7 @@ function buildMonthlyExcelXml(invoices, monthKey) {
         excelCell(invoice.buyer?.documentType || ''),
         excelCell(invoice.buyer?.documentNumber || invoice.voucher?.documentNumber || ''),
         excelCell(invoice.saleSnapshot?.address?.state || 'Argentina'),
+        excelCell(products),
         excelCell(net, 'Number', 'Currency'),
         excelCell(invoice.voucher?.vatRate || 0, 'Number', 'PercentNumber'),
         excelCell(vat, 'Number', 'Currency'),
@@ -161,7 +170,7 @@ function buildMonthlyExcelXml(invoices, monthKey) {
 
   const totalsRow = [
     excelCell('TOTAL DEL MES', 'String', 'TotalLabel'),
-    ...Array.from({ length: 7 }, () => excelCell('')),
+    ...Array.from({ length: 8 }, () => excelCell('')),
     excelCell(totals.net, 'Number', 'TotalCurrency'),
     excelCell(''),
     excelCell(totals.vat, 'Number', 'TotalCurrency'),
@@ -178,34 +187,63 @@ function buildMonthlyExcelXml(invoices, monthKey) {
  xmlns:o="urn:schemas-microsoft-com:office:office"
  xmlns:x="urn:schemas-microsoft-com:office:excel"
  xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
- <DocumentProperties xmlns="urn:schemas-microsoft-com:office:office"><Author>Panadero</Author><Title>Reporte mensual de facturación</Title></DocumentProperties>
+ <DocumentProperties xmlns="urn:schemas-microsoft-com:office:office">
+  <Author>Panadero</Author>
+  <Title>Listado mensual de facturas ${xmlEscape(monthKey)}</Title>
+ </DocumentProperties>
  <Styles>
-  <Style ss:ID="Default" ss:Name="Normal"><Alignment ss:Vertical="Bottom"/><Font ss:FontName="Arial" ss:Size="10"/></Style>
-  <Style ss:ID="Title"><Font ss:FontName="Arial" ss:Size="14" ss:Bold="1"/></Style>
-  <Style ss:ID="Header"><Font ss:Bold="1"/><Interior ss:Color="#E7E6E6" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/></Borders></Style>
+  <Style ss:ID="Default" ss:Name="Normal">
+   <Alignment ss:Vertical="Bottom"/>
+   <Font ss:FontName="Arial" ss:Size="10"/>
+  </Style>
+  <Style ss:ID="Header">
+   <Font ss:Bold="1"/>
+   <Interior ss:Color="#E7E6E6" ss:Pattern="Solid"/>
+   <Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/></Borders>
+  </Style>
   <Style ss:ID="Currency"><NumberFormat ss:Format="$#,##0.00"/></Style>
   <Style ss:ID="Integer"><NumberFormat ss:Format="0"/></Style>
   <Style ss:ID="PercentNumber"><NumberFormat ss:Format="0.00"/></Style>
-  <Style ss:ID="TotalLabel"><Font ss:Bold="1"/><Borders><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2"/></Borders></Style>
-  <Style ss:ID="TotalCurrency"><Font ss:Bold="1"/><NumberFormat ss:Format="$#,##0.00"/><Borders><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2"/></Borders></Style>
+  <Style ss:ID="TotalLabel">
+   <Font ss:Bold="1"/>
+   <Borders><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2"/></Borders>
+  </Style>
+  <Style ss:ID="TotalCurrency">
+   <Font ss:Bold="1"/>
+   <NumberFormat ss:Format="$#,##0.00"/>
+   <Borders><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2"/></Borders>
+  </Style>
  </Styles>
- <Worksheet ss:Name="Resumen">
-  <Table>
-   <Column ss:Width="150"/><Column ss:Width="150"/>
-   ${summaryRows.map(rowXml).join('\n   ')}
-  </Table>
- </Worksheet>
  <Worksheet ss:Name="Facturas">
   <Table>
-   <Column ss:Width="75"/><Column ss:Width="85"/><Column ss:Width="75"/><Column ss:Width="100"/>
-   <Column ss:Width="180"/><Column ss:Width="65"/><Column ss:Width="95"/><Column ss:Width="110"/>
-   <Column ss:Width="95"/><Column ss:Width="55"/><Column ss:Width="95"/><Column ss:Width="95"/>
-   <Column ss:Width="115"/><Column ss:Width="80"/><Column ss:Width="110"/><Column ss:Width="125"/>
+   <Column ss:Width="75"/>
+   <Column ss:Width="90"/>
+   <Column ss:Width="75"/>
+   <Column ss:Width="105"/>
+   <Column ss:Width="190"/>
+   <Column ss:Width="70"/>
+   <Column ss:Width="100"/>
+   <Column ss:Width="115"/>
+   <Column ss:Width="280"/>
+   <Column ss:Width="95"/>
+   <Column ss:Width="55"/>
+   <Column ss:Width="95"/>
+   <Column ss:Width="95"/>
+   <Column ss:Width="120"/>
+   <Column ss:Width="85"/>
+   <Column ss:Width="115"/>
+   <Column ss:Width="130"/>
    ${detailHeader}
    ${detailRows.map(rowXml).join('\n   ')}
    ${rowXml(totalsRow)}
   </Table>
-  <AutoFilter x:Range="R1C1:R${detailRows.length + 1}C16" xmlns="urn:schemas-microsoft-com:office:excel"/>
+  <AutoFilter x:Range="R1C1:R${detailRows.length + 1}C17" xmlns="urn:schemas-microsoft-com:office:excel"/>
+  <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
+   <FreezePanes/>
+   <FrozenNoSplit/>
+   <SplitHorizontal>1</SplitHorizontal>
+   <TopRowBottomPane>1</TopRowBottomPane>
+  </WorksheetOptions>
  </Worksheet>
 </Workbook>`
 }
