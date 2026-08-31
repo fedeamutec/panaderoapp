@@ -56,6 +56,63 @@ async function writeSaleInvoices(invoices) {
   await fs.rename(temporaryPath, saleInvoicesPath)
 }
 
+function onlyDigits(value) {
+  return String(value || '').replace(/\D/g, '')
+}
+
+function normalizeText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toUpperCase()
+}
+
+function documentIdentity(client = {}) {
+  const digits = onlyDigits(client.cuit || client.documentNumber)
+  if (digits.length === 11) return { documentType: 'CUIT', documentNumber: digits }
+  if (digits.length >= 7 && digits.length <= 8) return { documentType: 'DNI', documentNumber: digits }
+  return { documentType: '', documentNumber: digits }
+}
+
+function matchReceiverVatCondition(conditions = [], taxCondition = '', invoiceType = 'B') {
+  const normalized = normalizeText(taxCondition)
+  const className = String(invoiceType || 'B').toUpperCase()
+
+  if (className === 'A') {
+    if (!normalized.includes('RESPONSABLE') || !normalized.includes('INSCRIP')) {
+      throw new Error('Factura A requiere un receptor Responsable Inscripto. Revisá la condición fiscal del cliente.')
+    }
+    return conditions.find((item) => normalizeText(item.description).includes('RESPONSABLE INSCRIP'))
+  }
+
+  if (normalized.includes('MONOTRIB')) {
+    return conditions.find((item) => normalizeText(item.description).includes('MONOTRIB'))
+  }
+  if (normalized.includes('EXENT')) {
+    return conditions.find((item) => normalizeText(item.description).includes('EXENT'))
+  }
+  if (normalized.includes('CONSUMIDOR') || normalized.includes('FINAL')) {
+    return conditions.find((item) => normalizeText(item.description).includes('CONSUMIDOR FINAL'))
+  }
+
+  throw new Error('Para Factura B completá la condición fiscal del cliente (Consumidor final, Monotributo o Exento) antes de emitir.')
+}
+
+function commercialInvoiceItems(items = []) {
+  return (Array.isArray(items) ? items : []).map((item) => ({
+    code: String(item.code || ''),
+    title: String(item.name || item.title || 'Producto'),
+    quantity: Math.max(1, Number(item.quantity) || 1),
+    unitPrice: Number(item.discountedPrice ?? item.unitPrice ?? item.price ?? 0),
+    subtotal: Number(item.subtotal || 0),
+  }))
+}
+
+function commercialInvoiceTotal(items = []) {
+  return Math.round(items.reduce((sum, item) => sum + Number(item.subtotal || 0), 0) * 100) / 100
+}
+
 app.get('/api/exchange/bna', async (_req, res) => {
   try {
     const response = await fetch('https://www.bna.com.ar/Personas', {
@@ -413,6 +470,175 @@ app.post('/api/arca/test-invoice', async (req, res) => {
   } catch (error) {
     console.error('ARCA test invoice error:', error)
     res.status(400).json({ ok: false, error: error.message })
+  }
+})
+
+
+app.get('/api/arca/commercial-sequence', async (req, res) => {
+  try {
+    const invoiceType = String(req.query.invoiceType || '').toUpperCase()
+    const voucherType = invoiceType === 'A' ? 1 : invoiceType === 'B' ? 6 : 0
+    if (!voucherType) throw new Error('Elegí Factura A o Factura B.')
+    const sequence = await getLastAuthorizedVoucher({
+      pointOfSale: ARCA_POINT_OF_SALE,
+      voucherType,
+    })
+    res.json({
+      ok: true,
+      invoiceType,
+      pointOfSale: ARCA_POINT_OF_SALE,
+      voucherType,
+      lastVoucherNumber: sequence.lastVoucherNumber,
+      nextVoucherNumber: sequence.nextVoucherNumber,
+      formattedNextNumber: `${String(ARCA_POINT_OF_SALE).padStart(4, '0')}-${String(sequence.nextVoucherNumber).padStart(8, '0')}`,
+      environment: sequence.environment,
+    })
+  } catch (error) {
+    console.error('ARCA commercial sequence error:', error)
+    res.status(400).json({ ok: false, error: error.message })
+  }
+})
+
+app.get('/api/arca/commercial-invoices', async (_req, res) => {
+  try {
+    const invoices = await readSaleInvoices()
+    res.json({
+      ok: true,
+      invoices: invoices.filter((item) => item.source === 'commercial'),
+    })
+  } catch (error) {
+    console.error('Read commercial invoices error:', error)
+    res.status(500).json({ ok: false, error: error.message })
+  }
+})
+
+app.post('/api/arca/commercial-invoice', async (req, res) => {
+  try {
+    const invoiceType = String(req.body?.invoiceType || '').toUpperCase()
+    if (!['A', 'B'].includes(invoiceType)) throw new Error('Elegí Factura A o Factura B.')
+
+    const requestId = String(req.body?.requestId || '').trim()
+    if (!requestId) throw new Error('Falta el identificador de seguridad de la emisión.')
+
+    const confirmation = String(req.body?.confirmation || '')
+    if (confirmation !== `EMITIR_FACTURA_${invoiceType}_${requestId}`) {
+      throw new Error('La confirmación de seguridad no coincide con la factura.')
+    }
+
+    const client = req.body?.client || {}
+    const identity = documentIdentity(client)
+    if (!identity.documentType || !identity.documentNumber) {
+      throw new Error('El cliente necesita CUIT o DNI válido antes de emitir.')
+    }
+    if (invoiceType === 'A' && identity.documentType !== 'CUIT') {
+      throw new Error('Factura A requiere un CUIT válido de 11 dígitos.')
+    }
+
+    const items = commercialInvoiceItems(req.body?.items)
+    if (!items.length) throw new Error('Agregá al menos un producto antes de emitir.')
+    const amount = commercialInvoiceTotal(items)
+    if (!Number.isFinite(amount) || amount <= 0) throw new Error('El total de la factura no es válido.')
+
+    const invoices = await readSaleInvoices()
+    const duplicate = invoices.find((item) => item.source === 'commercial' && item.commercialRequestId === requestId)
+    if (duplicate) {
+      return res.status(409).json({
+        ok: false,
+        error: `Esta operación ya fue emitida como ${duplicate.voucher?.formattedNumber || 'comprobante autorizado'}.`,
+        invoice: duplicate,
+      })
+    }
+
+    const vatConditionsResponse = await getReceiverVatConditions({ voucherClass: invoiceType })
+    const vatCondition = matchReceiverVatCondition(
+      vatConditionsResponse.conditions || [],
+      client.taxCondition,
+      invoiceType,
+    )
+    if (!vatCondition?.id) {
+      throw new Error('ARCA no devolvió una condición IVA compatible para este cliente y tipo de factura.')
+    }
+
+    const result = await createSaleInvoice({
+      pointOfSale: ARCA_POINT_OF_SALE,
+      amount,
+      requestedType: invoiceType,
+      vatRate: req.body?.vatRate,
+      documentType: identity.documentType,
+      documentNumber: identity.documentNumber,
+      recipientVatConditionId: vatCondition.id,
+      confirmation: `EMITIR_VENTA_${requestId}`,
+    })
+
+    const addressLine = [
+      client.address,
+      client.locality,
+      client.postalCode ? `CP ${client.postalCode}` : '',
+    ].filter(Boolean).join(', ')
+
+    const invoice = {
+      id: `commercial-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      source: 'commercial',
+      commercialRequestId: requestId,
+      accountEmail: req.user.email,
+      brand: req.body?.brand || null,
+      buyer: {
+        name: client.legalName || client.name || 'Cliente',
+        documentType: identity.documentType,
+        documentNumber: identity.documentNumber,
+        taxCondition: client.taxCondition || '',
+      },
+      saleSnapshot: {
+        items,
+        address: {
+          addressLine,
+          city: client.locality || '',
+          state: '',
+          zipCode: client.postalCode || '',
+        },
+        amounts: { total: amount },
+        accountNickname: req.body?.brand?.name || process.env.ML_ACCOUNT_NAME || 'Panadero',
+      },
+      createdAt: new Date().toISOString(),
+      environment: result.environment,
+      voucher: result.voucher,
+      cae: result.cae,
+      caeExpirationDate: result.caeExpirationDate,
+      result: result.result,
+      observations: result.observations || [],
+      receiverVatCondition: vatCondition,
+    }
+
+    invoices.push(invoice)
+    await writeSaleInvoices(invoices)
+
+    res.json({ ok: true, invoice })
+  } catch (error) {
+    console.error('ARCA commercial invoice error:', error)
+    res.status(400).json({ ok: false, error: error.message })
+  }
+})
+
+app.get('/api/arca/commercial-invoices/:invoiceId/pdf', async (req, res) => {
+  try {
+    const invoiceId = String(req.params.invoiceId || '').trim()
+    const invoices = await readSaleInvoices()
+    const invoice = invoices.find((item) => item.source === 'commercial' && item.id === invoiceId)
+    if (!invoice) return res.status(404).json({ ok: false, error: 'No se encontró la factura.' })
+    if (invoice.accountEmail && invoice.accountEmail !== req.user.email) {
+      return res.status(403).json({ ok: false, error: 'La factura pertenece a otra cuenta.' })
+    }
+
+    const pdf = buildInvoicePdf(invoice)
+    const filename = `${invoice.voucher?.voucherTypeDescription || 'Factura'}-${invoice.voucher?.formattedNumber || invoiceId}.pdf`
+      .replace(/[^a-zA-Z0-9._-]+/g, '-')
+
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`)
+    res.send(pdf)
+  } catch (error) {
+    console.error('Commercial invoice PDF error:', error)
+    res.status(500).json({ ok: false, error: error.message })
   }
 })
 

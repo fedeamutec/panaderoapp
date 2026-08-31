@@ -127,9 +127,10 @@ function sellerName(invoice = {}, store = null) {
     snapshot.sellerNickname ||
     snapshot.accountNickname ||
     snapshot.accountName ||
+    invoice.brand?.name ||
     store?.account?.nickname ||
     process.env.ML_ACCOUNT_NAME ||
-    'CUENTA MERCADO LIBRE'
+    'PANADERO'
   )
 }
 
@@ -142,7 +143,7 @@ function normalizeItem(item = {}) {
       item.product?.title ||
       item.productName ||
       item.description ||
-      'Producto Mercado Libre',
+      'Producto',
     quantity: Number(item.quantity || item.qty || 1),
     unitPrice: Number(item.unitPrice || item.unit_price || item.price || item.totalPrice || 0),
   }
@@ -314,13 +315,17 @@ export function buildInvoicePdf(invoice) {
   row('Fecha de emision', arcaDate(voucher.date || invoice.createdAt))
   row('CAE', invoice.cae || invoice.caea || '—')
   row('Vencimiento CAE', arcaDate(invoice.caeExpirationDate))
-  row('Venta Mercado Libre', `#${invoice.orderId || '—'}`)
+  if (invoice.orderId) {
+    row('Venta Mercado Libre', `#${invoice.orderId}`)
+  } else if (invoice.source === 'commercial') {
+    row('Origen', 'Facturacion general · Panadero')
+  }
   line()
 
   text('RECEPTOR', 48, 11, true)
   row('Razon social / Nombre', buyer.name || 'Consumidor final')
   row('Documento', [buyer.documentType, buyer.documentNumber].filter(Boolean).join(' ') || 'Sin identificar')
-  row('Condicion IVA', voucher.voucherType === 1 ? 'Responsable Inscripto' : 'Consumidor Final')
+  row('Condicion IVA', invoice.receiverVatCondition?.description || buyer.taxCondition || (voucher.voucherType === 1 ? 'Responsable Inscripto' : 'Consumidor Final'))
 
   if (snapshot.address) {
     const address = [snapshot.address.addressLine, snapshot.address.city, snapshot.address.state]
@@ -336,7 +341,7 @@ export function buildInvoicePdf(invoice) {
     items.slice(0, 10).forEach((item) => {
       const quantity = Number(item.quantity || 1)
       const unitPrice = Number(item.unitPrice || 0)
-      wrapText(`${quantity} x ${item.title || 'Producto Mercado Libre'}`, 68).forEach((itemLine, index) => {
+      wrapText(`${quantity} x ${item.title || 'Producto'}`, 68).forEach((itemLine, index) => {
         text(itemLine, 48, index === 0 ? 9 : 8)
       })
       if (unitPrice > 0) {
@@ -345,7 +350,7 @@ export function buildInvoicePdf(invoice) {
       }
     })
   } else {
-    text('Producto Mercado Libre', 48, 9)
+    text('Producto', 48, 9)
   }
 
   line()

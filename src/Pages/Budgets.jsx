@@ -125,10 +125,10 @@ function budgetTotal(items) {
   return items.reduce((sum, item) => sum + Number(item.subtotal || 0), 0)
 }
 
-function Preview({ brand, client, items, number, draft = false, documentType = 'budget' }) {
+function Preview({ brand, client, items, number, draft = false, documentType = 'budget', authorized = false }) {
   const total = items.reduce((sum, item) => sum + item.subtotal, 0)
   const documentLabel = documentType === 'invoice-a' ? 'FACTURA A' : documentType === 'invoice-b' ? 'FACTURA B' : 'PRESUPUESTO'
-  const subtitle = documentType === 'budget' ? (brand.subtitle || 'Presupuesto comercial') : 'Vista previa · emisión ARCA pendiente'
+  const subtitle = documentType === 'budget' ? (brand.subtitle || 'Presupuesto comercial') : authorized ? 'Comprobante electrónico autorizado por ARCA' : 'Vista previa · emisión ARCA pendiente'
   return (
     <div className="budget-paper">
       <header className="budget-paper-header">
@@ -221,6 +221,10 @@ function Budgets() {
   const [priceQuery, setPriceQuery] = useState('')
   const [items, setItems] = useState([])
   const [documentType, setDocumentType] = useState('budget')
+  const [commercialInvoice, setCommercialInvoice] = useState(null)
+  const [invoiceSequence, setInvoiceSequence] = useState(null)
+  const [invoiceSequenceLoading, setInvoiceSequenceLoading] = useState(false)
+  const [invoiceEmitting, setInvoiceEmitting] = useState(false)
   const [generatedBudgets, setGeneratedBudgets] = useState(() => readStored(BUDGETS_KEY, []))
   const [nextNumber, setNextNumber] = useState(1)
   const [serverBudgetReady, setServerBudgetReady] = useState(false)
@@ -354,6 +358,38 @@ function Budgets() {
   }, [])
 
   useEffect(() => {
+    if (documentType === 'budget') {
+      setInvoiceSequence(null)
+      setCommercialInvoice(null)
+      return undefined
+    }
+
+    let cancelled = false
+    const loadSequence = async () => {
+      setInvoiceSequenceLoading(true)
+      setCommercialInvoice(null)
+      try {
+        const invoiceType = documentType === 'invoice-a' ? 'A' : 'B'
+        const response = await fetch(`${API_BASE}/arca/commercial-sequence?invoiceType=${invoiceType}`, {
+          credentials: 'include',
+        })
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(data.error || 'No se pudo consultar la numeración de ARCA.')
+        if (!cancelled) setInvoiceSequence(data)
+      } catch (error) {
+        if (!cancelled) {
+          setInvoiceSequence(null)
+          setNotice(error.message)
+        }
+      } finally {
+        if (!cancelled) setInvoiceSequenceLoading(false)
+      }
+    }
+    loadSequence()
+    return () => { cancelled = true }
+  }, [documentType])
+
+  useEffect(() => {
     setClientDraft(selectedClient ? { ...selectedClient } : null)
   }, [selectedClientId, selectedClient])
 
@@ -432,7 +468,10 @@ function Budgets() {
 
   const hasClientChanges = Boolean(clientDraft && selectedClient && JSON.stringify(clientDraft) !== JSON.stringify(selectedClient))
 
-  const invalidateConfirmation = () => setConfirmedBudget(null)
+  const invalidateConfirmation = () => {
+    setConfirmedBudget(null)
+    setCommercialInvoice(null)
+  }
 
   const selectClient = (clientId) => {
     setSelectedClientId(clientId)
@@ -570,6 +609,65 @@ function Budgets() {
     } catch (error) {
       setNotice(error.message)
     }
+  }
+
+  const emitCommercialInvoice = async () => {
+    const client = clientDraft || selectedClient
+    if (!client) {
+      setNotice('Seleccioná un cliente antes de emitir la factura.')
+      return
+    }
+    if (!items.length) {
+      setNotice('Agregá al menos un producto antes de emitir la factura.')
+      return
+    }
+
+    const invoiceType = documentType === 'invoice-a' ? 'A' : documentType === 'invoice-b' ? 'B' : ''
+    if (!invoiceType) return
+
+    const total = budgetTotal(items)
+    const documentLabel = `Factura ${invoiceType}`
+    const expectedNumber = invoiceSequence?.formattedNextNumber || 'el próximo número disponible de ARCA'
+    if (!window.confirm(`¿Emitir ${documentLabel} por ${formatCurrency(total)} en el punto de venta 0003?\n\nARCA asignará ${expectedNumber}. Esta acción solicita un CAE real y no se puede deshacer.`)) return
+
+    const requestId = `general-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    setInvoiceEmitting(true)
+    try {
+      const response = await fetch(`${API_BASE}/arca/commercial-invoice`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestId,
+          confirmation: `EMITIR_FACTURA_${invoiceType}_${requestId}`,
+          invoiceType,
+          client,
+          items,
+          brand,
+        }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || `No se pudo emitir la ${documentLabel}.`)
+
+      setCommercialInvoice(data.invoice)
+      setNotice(`${documentLabel} ${data.invoice?.voucher?.formattedNumber || ''} autorizada por ARCA. CAE ${data.invoice?.cae || ''}.`)
+      try {
+        const sequenceResponse = await fetch(`${API_BASE}/arca/commercial-sequence?invoiceType=${invoiceType}`, { credentials: 'include' })
+        const nextSequence = await sequenceResponse.json().catch(() => ({}))
+        if (sequenceResponse.ok) setInvoiceSequence(nextSequence)
+      } catch {
+        // La factura ya quedó autorizada; la numeración se refrescará al volver a entrar.
+      }
+    } catch (error) {
+      setNotice(error.message)
+    } finally {
+      setInvoiceEmitting(false)
+    }
+  }
+
+  const openCommercialInvoicePdf = () => {
+    if (!commercialInvoice?.id) return
+    window.open(`${API_BASE}/arca/commercial-invoices/${encodeURIComponent(commercialInvoice.id)}/pdf`, '_blank', 'noopener,noreferrer')
   }
 
   const createDebitNote = async (budget = confirmedBudget) => {
@@ -1011,42 +1109,56 @@ function Budgets() {
           </section>
 
           <section className="budget-preview-column">
-            <div className="budget-column-heading budget-preview-heading"><div><span>Documento</span><strong>Vista previa</strong></div><div className="budget-preview-actions"><button className="ghost-button" type="button" onClick={printDraft}>Guardar borrador</button><button className="ghost-button budget-confirm-button" type="button" onClick={documentType === 'budget' ? confirmBudget : () => setNotice('Factura A/B preparada visualmente. La emisión fiscal se habilitará al conectarla con ARCA.')}>{documentType === 'budget' ? 'Confirmar' : 'Emitir'}</button><button className="ghost-button" type="button" disabled={!confirmedBudget} onClick={() => printTransport(confirmedBudget)}>Transporte</button><button className="primary-button" type="button" disabled={!confirmedBudget} onClick={() => printConfirmedBudget(confirmedBudget)}>PDF / Descargar</button></div></div>
+            <div className="budget-column-heading budget-preview-heading"><div><span>Documento</span><strong>Vista previa</strong></div><div className="budget-preview-actions"><button className="ghost-button" type="button" onClick={printDraft}>Guardar borrador</button><button className="ghost-button budget-confirm-button" type="button" disabled={invoiceEmitting} onClick={documentType === 'budget' ? confirmBudget : emitCommercialInvoice}>{documentType === 'budget' ? 'Confirmar' : invoiceEmitting ? 'Emitiendo…' : 'Emitir en ARCA'}</button><button className="ghost-button" type="button" disabled={documentType !== 'budget' || !confirmedBudget} onClick={() => printTransport(confirmedBudget)}>Transporte</button><button className="primary-button" type="button" disabled={documentType === 'budget' ? !confirmedBudget : !commercialInvoice} onClick={documentType === 'budget' ? () => printConfirmedBudget(confirmedBudget) : openCommercialInvoicePdf}>PDF / Descargar</button></div></div>
             <div className="budget-brand-tabs" aria-label="Marcas de presupuesto">
               {brands.map((item) => <button key={item.id} type="button" className={item.id === brand.id ? 'active' : ''} onClick={() => selectBrand(item.id)}><span>{item.name || 'Sin nombre'}</span><small>N.º {String(item.id === brand.id ? nextNumber : item.nextNumber || 1).padStart(6, '0')}</small></button>)}
               <button type="button" className="brand-tab-edit" onClick={editActiveBrand}>Editar</button>
               <button type="button" className="brand-tab-add" onClick={openNewBrand}>＋</button>
             </div>
-            <div className={`budget-number-panel ${confirmedBudget?.debitNote ? 'has-debit-note' : ''}`}>
-              <div>
-                <span>N.º presupuesto</span>
-                <small>{confirmedBudget?.debitNote ? 'Presupuesto con nota de débito' : confirmedBudget ? 'Presupuesto confirmado' : 'Podés editarlo antes de confirmar'}</small>
+            {documentType === 'budget' ? (
+              <div className={`budget-number-panel ${confirmedBudget?.debitNote ? 'has-debit-note' : ''}`}>
+                <div>
+                  <span>N.º presupuesto</span>
+                  <small>{confirmedBudget?.debitNote ? 'Presupuesto con nota de débito' : confirmedBudget ? 'Presupuesto confirmado' : 'Podés editarlo antes de confirmar'}</small>
+                </div>
+                <div className="budget-number-actions">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={String(confirmedBudget?.number || nextNumber).padStart(6, '0')}
+                    disabled={Boolean(confirmedBudget)}
+                    onChange={(event) => {
+                      const digits = event.target.value.replace(/\D/g, '')
+                      const value = Number(digits)
+                      if (Number.isInteger(value) && value > 0) setNextNumber(value)
+                    }}
+                    aria-label="Número de presupuesto"
+                  />
+                  <button
+                    type="button"
+                    className="ghost-button budget-debit-note-button"
+                    disabled={!confirmedBudget || Boolean(confirmedBudget?.debitNote)}
+                    onClick={() => createDebitNote(confirmedBudget)}
+                  >
+                    {confirmedBudget?.debitNote ? 'Nota de débito emitida' : 'Nota de débito'}
+                  </button>
+                </div>
               </div>
-              <div className="budget-number-actions">
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  value={String(confirmedBudget?.number || nextNumber).padStart(6, '0')}
-                  disabled={Boolean(confirmedBudget)}
-                  onChange={(event) => {
-                    const digits = event.target.value.replace(/\D/g, '')
-                    const value = Number(digits)
-                    if (Number.isInteger(value) && value > 0) setNextNumber(value)
-                  }}
-                  aria-label="Número de presupuesto"
-                />
-                <button
-                  type="button"
-                  className="ghost-button budget-debit-note-button"
-                  disabled={!confirmedBudget || Boolean(confirmedBudget?.debitNote)}
-                  onClick={() => createDebitNote(confirmedBudget)}
-                >
-                  {confirmedBudget?.debitNote ? 'Nota de débito emitida' : 'Nota de débito'}
-                </button>
+            ) : (
+              <div className={`budget-number-panel fiscal-number-panel ${commercialInvoice ? 'authorized' : ''}`}>
+                <div>
+                  <span>{documentType === 'invoice-a' ? 'Factura A' : 'Factura B'} · ARCA</span>
+                  <small>{commercialInvoice ? `CAE ${commercialInvoice.cae}` : 'Punto de venta 0003 · numeración fiscal automática'}</small>
+                </div>
+                <div className="budget-number-actions">
+                  <strong className="fiscal-sequence-number">
+                    {commercialInvoice?.voucher?.formattedNumber || (invoiceSequenceLoading ? 'Consultando…' : invoiceSequence?.formattedNextNumber || '—')}
+                  </strong>
+                </div>
               </div>
-            </div>
-            <div className="budget-preview-scroll"><Preview brand={brand} client={clientDraft || selectedClient} items={items} number={confirmedBudget?.number || nextNumber} documentType={documentType} /></div>
+            )}
+            <div className="budget-preview-scroll"><Preview brand={brand} client={clientDraft || selectedClient} items={items} number={documentType === 'budget' ? (confirmedBudget?.number || nextNumber) : (commercialInvoice?.voucher?.formattedNumber || invoiceSequence?.formattedNextNumber || '—')} documentType={documentType} authorized={Boolean(commercialInvoice)} /></div>
           </section>
         </div>
       ) : (

@@ -403,6 +403,7 @@ export async function createSaleInvoice({
   vatRate = ARCA_VAT_RATE,
   documentType,
   documentNumber,
+  recipientVatConditionId: requestedRecipientVatConditionId,
   confirmation,
 }) {
   if (!String(confirmation || '').startsWith('EMITIR_VENTA_')) {
@@ -418,7 +419,11 @@ export async function createSaleInvoice({
     documentType: docTipo,
     documentNumber: docNro,
   })
-  const recipientVatConditionId = recipientVatConditionIdFor({ voucherType })
+  const fallbackRecipientVatConditionId = recipientVatConditionIdFor({ voucherType })
+  const parsedRecipientVatConditionId = Number(requestedRecipientVatConditionId)
+  const recipientVatConditionId = Number.isInteger(parsedRecipientVatConditionId) && parsedRecipientVatConditionId > 0
+    ? parsedRecipientVatConditionId
+    : fallbackRecipientVatConditionId
   const { rate, vatId, netAmount, vatAmount } = calculateVatBreakdown(total, vatRate)
 
   if (!Number.isInteger(ptoVta) || ptoVta <= 0) {
