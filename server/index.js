@@ -829,8 +829,8 @@ app.get('/api/arca/last-voucher', async (req, res) => {
 })
 
 
-const argentinaMapCachePath = path.join(process.cwd(), 'server', 'data', 'argentina-provincias.geojson')
-const ARGENTINA_MAP_SOURCE = 'https://apis.datos.gob.ar/georef/api/v2.0/provincias.geojson'
+const argentinaMapCachePath = path.join(process.cwd(), 'server', 'data', 'argentina-provincias-simplemaps.geojson')
+const ARGENTINA_MAP_SOURCE = 'https://simplemaps.com/static/svg/country/ar/admin1/ar.json'
 
 function isArgentinaPolygonMap(value) {
   return value?.type === 'FeatureCollection'
@@ -848,8 +848,8 @@ app.get('/api/reports/argentina-map', requireAuth, async (_req, res) => {
         res.type('application/geo+json').send(cached)
         return
       }
-      // La fuente anterior devolvía puntos/centroides. Si quedó cacheada,
-      // la descartamos automáticamente y descargamos el mapa poligonal correcto.
+      // Si el cache no contiene las 24 jurisdicciones con polígonos, se descarta
+      // y se vuelve a descargar la geometría provincial real de Argentina.
       await fs.rm(argentinaMapCachePath, { force: true })
     } catch (error) {
       if (error?.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error
