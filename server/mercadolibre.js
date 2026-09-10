@@ -592,6 +592,230 @@ export async function getOrderDetail(orderId) {
   }
 }
 
+
+const REPORT_PAGE_SIZE = 50
+const REPORT_MAX_ORDERS = 1000
+const REPORT_SHIPMENT_CONCURRENCY = 8
+
+const PROVINCE_ALIASES = {
+  'BUENOS AIRES': 'Buenos Aires',
+  'CIUDAD AUTONOMA DE BUENOS AIRES': 'Ciudad Autónoma de Buenos Aires',
+  'CIUDAD DE BUENOS AIRES': 'Ciudad Autónoma de Buenos Aires',
+  'CAPITAL FEDERAL': 'Ciudad Autónoma de Buenos Aires',
+  CABA: 'Ciudad Autónoma de Buenos Aires',
+  CATAMARCA: 'Catamarca',
+  CHACO: 'Chaco',
+  CHUBUT: 'Chubut',
+  CORDOBA: 'Córdoba',
+  CORRIENTES: 'Corrientes',
+  'ENTRE RIOS': 'Entre Ríos',
+  FORMOSA: 'Formosa',
+  JUJUY: 'Jujuy',
+  'LA PAMPA': 'La Pampa',
+  'LA RIOJA': 'La Rioja',
+  MENDOZA: 'Mendoza',
+  MISIONES: 'Misiones',
+  NEUQUEN: 'Neuquén',
+  'RIO NEGRO': 'Río Negro',
+  SALTA: 'Salta',
+  'SAN JUAN': 'San Juan',
+  'SAN LUIS': 'San Luis',
+  'SANTA CRUZ': 'Santa Cruz',
+  'SANTA FE': 'Santa Fe',
+  'SANTIAGO DEL ESTERO': 'Santiago del Estero',
+  'TIERRA DEL FUEGO': 'Tierra del Fuego',
+  TUCUMAN: 'Tucumán',
+}
+
+function normalizeReportText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase()
+}
+
+function normalizeProvince(value) {
+  const normalized = normalizeReportText(value)
+  if (!normalized) return 'Sin provincia'
+  return PROVINCE_ALIASES[normalized] || String(value || '').trim()
+}
+
+function reportPeriodDates(period = '90d') {
+  const daysByPeriod = { '30d': 30, '90d': 90, '180d': 180, '365d': 365 }
+  const days = daysByPeriod[period]
+  if (!days) return { from: null, to: null }
+
+  const to = new Date()
+  const from = new Date(to)
+  from.setUTCDate(from.getUTCDate() - days)
+  return { from: from.toISOString(), to: to.toISOString() }
+}
+
+function receiverAddressFrom(order, shipment) {
+  return shipment?.receiver_address || order?.shipping?.receiver_address || null
+}
+
+function reportBuyerName(order = {}) {
+  return [order.buyer?.first_name, order.buyer?.last_name]
+    .filter(Boolean)
+    .join(' ')
+    .trim()
+    || order.buyer?.nickname
+    || `Comprador ${order.buyer?.id || ''}`.trim()
+    || 'Cliente Mercado Libre'
+}
+
+function latestDate(left, right) {
+  if (!left) return right || null
+  if (!right) return left
+  return new Date(right).getTime() > new Date(left).getTime() ? right : left
+}
+
+export async function getMercadoLibreCustomerReport({ period = '90d' } = {}) {
+  const store = await readStore()
+  if (!store.account?.id) throw new Error('Mercado Libre no está conectado')
+
+  const token = await getAccessToken()
+  const { from, to } = reportPeriodDates(period)
+  const rawOrders = []
+  let totalAvailable = 0
+  let offset = 0
+
+  while (rawOrders.length < REPORT_MAX_ORDERS) {
+    const limit = Math.min(REPORT_PAGE_SIZE, REPORT_MAX_ORDERS - rawOrders.length)
+    const query = new URLSearchParams({
+      seller: String(store.account.id),
+      sort: 'date_desc',
+      limit: String(limit),
+      offset: String(offset),
+    })
+
+    if (from) query.set('order.date_created.from', from)
+    if (to) query.set('order.date_created.to', to)
+
+    const result = await apiFetch(`/orders/search?${query.toString()}`, token)
+    const pageOrders = Array.isArray(result.results) ? result.results : []
+    totalAvailable = Number(result.paging?.total ?? pageOrders.length)
+    rawOrders.push(...pageOrders)
+
+    if (!pageOrders.length || rawOrders.length >= totalAvailable) break
+    offset += pageOrders.length
+  }
+
+  const paidOrders = rawOrders.filter((order) => String(order.status || '').toLowerCase() === 'paid')
+
+  const enrichedOrders = await mapWithConcurrency(
+    paidOrders,
+    REPORT_SHIPMENT_CONCURRENCY,
+    async (order) => {
+      let shipment = null
+      if (order.shipping?.id) {
+        try {
+          shipment = await apiFetch(`/shipments/${encodeURIComponent(String(order.shipping.id))}`, token)
+        } catch {
+          shipment = null
+        }
+      }
+      return { order, shipment }
+    },
+  )
+
+  const provinces = new Map()
+  const globalCustomers = new Set()
+  let amountTotal = 0
+
+  for (const { order, shipment } of enrichedOrders) {
+    const address = receiverAddressFrom(order, shipment)
+    const provinceName = normalizeProvince(address?.state?.name || address?.state_name)
+    const locality = String(address?.city?.name || address?.city_name || '').trim()
+    const amount = Number(order.total_amount || order.paid_amount || 0)
+    const buyerId = String(order.buyer?.id || '').trim()
+    const customerKey = buyerId || normalizeReportText(reportBuyerName(order))
+    const customerName = reportBuyerName(order)
+    const dateCreated = order.date_created || null
+    const products = (order.order_items || [])
+      .map((entry) => String(entry.item?.title || '').trim())
+      .filter(Boolean)
+
+    amountTotal += amount
+    globalCustomers.add(customerKey)
+
+    if (!provinces.has(provinceName)) {
+      provinces.set(provinceName, {
+        name: provinceName,
+        sales: 0,
+        amount: 0,
+        customers: new Map(),
+      })
+    }
+
+    const province = provinces.get(provinceName)
+    province.sales += 1
+    province.amount += amount
+
+    if (!province.customers.has(customerKey)) {
+      province.customers.set(customerKey, {
+        id: buyerId || customerKey,
+        name: customerName,
+        nickname: order.buyer?.nickname || '',
+        sales: 0,
+        amount: 0,
+        lastPurchase: null,
+        localities: new Set(),
+        products: new Set(),
+      })
+    }
+
+    const customer = province.customers.get(customerKey)
+    customer.sales += 1
+    customer.amount += amount
+    customer.lastPurchase = latestDate(customer.lastPurchase, dateCreated)
+    if (locality) customer.localities.add(locality)
+    products.forEach((product) => customer.products.add(product))
+  }
+
+  const provinceRows = [...provinces.values()]
+    .map((province) => {
+      const customers = [...province.customers.values()]
+        .map((customer) => ({
+          ...customer,
+          localities: [...customer.localities].sort((a, b) => a.localeCompare(b, 'es')),
+          products: [...customer.products],
+        }))
+        .sort((a, b) => b.sales - a.sales || b.amount - a.amount)
+
+      return {
+        name: province.name,
+        sales: province.sales,
+        customersCount: customers.length,
+        amount: Math.round(province.amount * 100) / 100,
+        averageTicket: province.sales ? Math.round((province.amount / province.sales) * 100) / 100 : 0,
+        customers,
+      }
+    })
+    .sort((a, b) => b.sales - a.sales || b.amount - a.amount)
+
+  return {
+    ok: true,
+    period,
+    generatedAt: new Date().toISOString(),
+    source: 'mercadolibre',
+    summary: {
+      sales: paidOrders.length,
+      customers: globalCustomers.size,
+      amount: Math.round(amountTotal * 100) / 100,
+      averageTicket: paidOrders.length ? Math.round((amountTotal / paidOrders.length) * 100) / 100 : 0,
+      provinces: provinceRows.filter((province) => province.name !== 'Sin provincia').length,
+    },
+    provinces: provinceRows,
+    scannedOrders: rawOrders.length,
+    totalAvailable,
+    truncated: rawOrders.length < totalAvailable,
+  }
+}
+
 export async function getStatus() {
   const store = await readStore()
 

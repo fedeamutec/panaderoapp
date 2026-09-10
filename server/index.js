@@ -9,6 +9,7 @@ import {
   exchangeAuthorizationCode,
   getOrderDetail,
   getOrders,
+  getMercadoLibreCustomerReport,
   getStatus,
   syncOrders,
   uploadFiscalDocument,
@@ -824,6 +825,16 @@ app.get('/api/arca/last-voucher', async (req, res) => {
   } catch (error) {
     console.error('ARCA last voucher error:', error)
     res.status(400).json({ ok: false, error: error.message })
+  }
+})
+
+app.get('/api/reports/mercadolibre-customers', requireAuth, async (req, res) => {
+  try {
+    const period = String(req.query.period || '90d')
+    res.json(await getMercadoLibreCustomerReport({ period }))
+  } catch (error) {
+    console.error('Mercado Libre customer report error:', error)
+    res.status(500).json({ error: error.message })
   }
 })
 

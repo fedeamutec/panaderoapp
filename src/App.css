@@ -2122,3 +2122,60 @@ body,
   border-color:color-mix(in srgb,var(--green) 58%,var(--line));
   color:var(--green);
 }
+
+/* Reportes · mapa de clientes */
+.report-map-header { align-items:center; }
+.report-header-actions { display:flex; align-items:center; gap:8px; }
+.report-header-actions select { height:36px; min-width:118px; padding:0 30px 0 10px; color:var(--text); background:var(--panel-2); border:1px solid var(--line); border-radius:6px; outline:0; font:inherit; font-size:calc(10px * var(--font-scale)); }
+.report-map-content { width:min(1320px,100%); }
+.report-state { display:flex; min-height:90px; align-items:center; justify-content:center; gap:10px; padding:18px; color:var(--muted); background:var(--panel); border:1px solid var(--line); border-radius:12px; font-size:calc(10px * var(--font-scale)); }
+.report-state.error { flex-direction:column; color:var(--red); }
+.report-warning { padding:11px 14px; color:#c99e4c; background:color-mix(in srgb,var(--accent-soft) 82%,var(--panel)); border:1px solid color-mix(in srgb,var(--accent) 35%,var(--line)); border-radius:9px; font-size:calc(9px * var(--font-scale)); }
+.report-summary-grid { grid-template-columns:repeat(4,minmax(0,1fr)); }
+.report-map-layout { display:grid; grid-template-columns:minmax(420px,1.3fr) minmax(320px,.7fr); gap:16px; }
+.report-map-card, .report-ranking-card { min-height:620px; }
+.argentina-map-wrap { display:flex; min-height:535px; flex-direction:column; align-items:center; justify-content:center; padding:18px; }
+.argentina-map { width:min(100%,390px); height:480px; overflow:visible; }
+.argentina-province { fill:var(--panel-2); stroke:var(--line); stroke-width:1.4; vector-effect:non-scaling-stroke; cursor:default; transition:fill .18s ease, opacity .18s ease, stroke .18s ease; }
+.argentina-province.level-1 { fill:color-mix(in srgb,var(--accent) 20%,var(--panel-2)); cursor:pointer; }
+.argentina-province.level-2 { fill:color-mix(in srgb,var(--accent) 36%,var(--panel-2)); cursor:pointer; }
+.argentina-province.level-3 { fill:color-mix(in srgb,var(--accent) 52%,var(--panel-2)); cursor:pointer; }
+.argentina-province.level-4 { fill:color-mix(in srgb,var(--accent) 70%,var(--panel-2)); cursor:pointer; }
+.argentina-province.level-5 { fill:color-mix(in srgb,var(--accent) 88%,var(--panel-2)); cursor:pointer; }
+.argentina-province[class*="level-"]:hover { stroke:var(--text); stroke-width:2; }
+.argentina-province.selected { stroke:var(--text); stroke-width:2.8; filter:brightness(1.08); }
+.argentina-caba { fill:var(--accent); stroke:var(--text); stroke-width:1.5; cursor:pointer; }
+.argentina-caba.selected { stroke-width:3; }
+.map-legend { display:flex; align-items:center; justify-content:center; gap:8px; color:var(--subtle); font-size:calc(8px * var(--font-scale)); }
+.map-legend > div { display:flex; gap:3px; }
+.map-legend i { display:block; width:20px; height:7px; border-radius:2px; background:var(--panel-2); }
+.map-legend i.level-1 { background:color-mix(in srgb,var(--accent) 20%,var(--panel-2)); }
+.map-legend i.level-2 { background:color-mix(in srgb,var(--accent) 36%,var(--panel-2)); }
+.map-legend i.level-3 { background:color-mix(in srgb,var(--accent) 52%,var(--panel-2)); }
+.map-legend i.level-4 { background:color-mix(in srgb,var(--accent) 70%,var(--panel-2)); }
+.map-legend i.level-5 { background:color-mix(in srgb,var(--accent) 88%,var(--panel-2)); }
+.map-placeholder { display:flex; min-height:520px; flex-direction:column; align-items:center; justify-content:center; gap:7px; padding:24px; color:var(--muted); text-align:center; }
+.map-placeholder strong { color:var(--text); font-size:calc(13px * var(--font-scale)); }
+.map-placeholder span { max-width:360px; font-size:calc(9px * var(--font-scale)); line-height:1.5; }
+.province-ranking { display:flex; flex-direction:column; }
+.province-ranking button { display:grid; grid-template-columns:34px minmax(0,1fr) auto; min-height:52px; align-items:center; gap:8px; padding:8px 14px; color:var(--text); background:transparent; border:0; border-bottom:1px solid var(--line-soft); text-align:left; }
+.province-ranking button:hover, .province-ranking button.active { background:var(--panel-2); }
+.province-ranking button.active { box-shadow:inset 2px 0 var(--accent); }
+.province-ranking b { color:var(--subtle); font-size:calc(9px * var(--font-scale)); }
+.province-ranking span strong, .province-ranking span small { display:block; }
+.province-ranking span strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:calc(10px * var(--font-scale)); }
+.province-ranking span small { margin-top:3px; color:var(--subtle); font-size:calc(8px * var(--font-scale)); }
+.province-ranking em { color:var(--accent); font-size:calc(14px * var(--font-scale)); font-style:normal; font-weight:800; }
+.province-detail-card > header .ghost-button { flex:0 0 auto; }
+.province-kpis { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:1px; background:var(--line); border-bottom:1px solid var(--line); }
+.customer-table-wrap { width:100%; overflow:auto; }
+.customer-table { width:100%; min-width:760px; border-collapse:collapse; }
+.customer-table th { padding:10px 14px; color:var(--subtle); background:var(--panel-2); border-bottom:1px solid var(--line); text-align:left; font-size:calc(8px * var(--font-scale)); letter-spacing:.05em; text-transform:uppercase; }
+.customer-table td { padding:12px 14px; color:var(--muted); border-bottom:1px solid var(--line-soft); font-size:calc(9px * var(--font-scale)); }
+.customer-table td strong, .customer-table td small { display:block; }
+.customer-table td strong { color:var(--text); font-size:calc(10px * var(--font-scale)); }
+.customer-table td small { margin-top:3px; color:var(--subtle); font-size:calc(8px * var(--font-scale)); }
+.report-empty { padding:28px; color:var(--muted); text-align:center; font-size:calc(10px * var(--font-scale)); }
+@media (max-width: 1100px) { .report-map-layout { grid-template-columns:1fr; } .report-map-card, .report-ranking-card { min-height:unset; } .report-ranking-card { max-height:560px; overflow:auto; } }
+@media (max-width: 760px) { .report-map-header { align-items:flex-start; flex-direction:column; gap:14px; } .report-header-actions { width:100%; } .report-header-actions select, .report-header-actions .primary-button { flex:1; } .report-summary-grid, .province-kpis { grid-template-columns:repeat(2,minmax(0,1fr)); } .argentina-map-wrap { min-height:460px; } .argentina-map { height:400px; } }
+@media (max-width: 520px) { .report-summary-grid, .province-kpis { grid-template-columns:1fr; } .report-header-actions { align-items:stretch; flex-direction:column; } }

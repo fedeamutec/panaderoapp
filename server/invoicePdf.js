@@ -202,17 +202,26 @@ function invoiceNumber(voucher = {}) {
   return Number.isFinite(last) && last > 0 ? last : 0
 }
 
-function buildArcaQrUrl(invoice = {}) {
+function invoiceIssuerCuit(invoice = {}) {
   const voucher = invoice.voucher || {}
-  const buyer = invoice.buyer || {}
-  const documentNumber = onlyDigits(buyer.documentNumber)
-  const issuerCuit = onlyDigits(
+  return onlyDigits(
     invoice.issuerCuit ||
       voucher.issuerCuit ||
       process.env.ARCA_CUIT ||
       process.env.CUIT ||
       '',
   )
+}
+
+function issuerFiscalAddress() {
+  return cleanText(process.env.ARCA_FISCAL_ADDRESS || 'Santa Cruz 1219')
+}
+
+function buildArcaQrUrl(invoice = {}) {
+  const voucher = invoice.voucher || {}
+  const buyer = invoice.buyer || {}
+  const documentNumber = onlyDigits(buyer.documentNumber)
+  const issuerCuit = invoiceIssuerCuit(invoice)
 
   const payload = {
     ver: 1,
@@ -312,6 +321,8 @@ export function buildInvoicePdf(invoice) {
   line()
 
   row('Punto de venta', String(voucher.pointOfSale || '—').padStart(4, '0'))
+  row('CUIT emisor', invoiceIssuerCuit(invoice) || '—')
+  row('Domicilio fiscal', issuerFiscalAddress())
   row('Fecha de emision', arcaDate(voucher.date || invoice.createdAt))
   row('CAE', invoice.cae || invoice.caea || '—')
   row('Vencimiento CAE', arcaDate(invoice.caeExpirationDate))
