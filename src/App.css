@@ -2189,3 +2189,9 @@ body,
 .argentina-map-caba-label { fill:var(--text); font-size:10px; font-weight:700; pointer-events:none; }
 .map-note { margin-top:10px; color:var(--muted); font-size:11px; text-align:center; }
 @media (max-width:760px) { .argentina-map-fixed { height:430px; } }
+
+/* Mapa real SVG incluido localmente en Panadero */
+.argentina-map-svg-host { width:min(100%,430px); height:520px; display:flex; align-items:center; justify-content:center; }
+.argentina-map-svg-host > svg { width:100%; height:100%; display:block; overflow:visible; }
+.argentina-map-real .argentina-province { cursor:pointer; }
+@media (max-width:760px) { .argentina-map-svg-host { height:430px; } }
