@@ -2181,3 +2181,11 @@ body,
 @media (max-width: 520px) { .report-summary-grid, .province-kpis { grid-template-columns:1fr; } .report-header-actions { align-items:stretch; flex-direction:column; } }
 
 .report-cache-note { margin: -2px 0 14px; color: #858585; font-size: 12px; }
+
+/* Mapa fijo de Argentina: no depende de geometrías ni APIs externas */
+.argentina-map-fixed { height:520px; max-width:360px; }
+.argentina-province-group { cursor:pointer; }
+.argentina-map-sales { fill:var(--text); font-size:10px; font-weight:700; pointer-events:none; paint-order:stroke; stroke:rgba(0,0,0,.55); stroke-width:2px; }
+.argentina-map-caba-label { fill:var(--text); font-size:10px; font-weight:700; pointer-events:none; }
+.map-note { margin-top:10px; color:var(--muted); font-size:11px; text-align:center; }
+@media (max-width:760px) { .argentina-map-fixed { height:430px; } }

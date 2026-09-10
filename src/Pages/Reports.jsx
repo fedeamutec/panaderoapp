@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 
 const API_BASE = 'https://api.panaderoapp.com/api'
-const GEOJSON_URL = '/reports/argentina-map'
-
 const periods = [
   ['30d', '30 días'],
   ['90d', '3 meses'],
@@ -39,46 +37,6 @@ const provinceAliases = {
 function provinceKey(value) {
   const normalized = normalizeText(value)
   return provinceAliases[normalized] || normalized
-}
-
-function featureName(feature) {
-  const properties = feature?.properties || {}
-  return properties.nombre || properties.name || properties.provincia_nombre || properties.NAME_1 || ''
-}
-
-function geometryRings(geometry) {
-  if (!geometry) return []
-  if (geometry.type === 'Polygon') return geometry.coordinates || []
-  if (geometry.type === 'MultiPolygon') return (geometry.coordinates || []).flat()
-  return []
-}
-
-function ringIsArgentinaMainland(ring) {
-  if (!Array.isArray(ring) || ring.length < 3) return false
-  const valid = ring.filter(([lon, lat]) => lon >= -75 && lon <= -52 && lat >= -57 && lat <= -20)
-  return valid.length >= Math.max(3, Math.floor(ring.length * 0.55))
-}
-
-function projectPoint(lon, lat) {
-  const minLon = -74.5
-  const maxLon = -52.5
-  const minLat = -55.5
-  const maxLat = -21.5
-  const width = 440
-  const height = 690
-  const x = ((lon - minLon) / (maxLon - minLon)) * width
-  const y = ((maxLat - lat) / (maxLat - minLat)) * height
-  return [x, y]
-}
-
-function featurePath(feature) {
-  return geometryRings(feature?.geometry)
-    .filter(ringIsArgentinaMainland)
-    .map((ring) => ring.map(([lon, lat], index) => {
-      const [x, y] = projectPoint(lon, lat)
-      return `${index ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`
-    }).join(' ') + ' Z')
-    .join(' ')
 }
 
 function colorLevel(sales, maximum) {
@@ -144,48 +102,71 @@ function exportExcel(report, selectedProvince) {
   URL.revokeObjectURL(url)
 }
 
-function ArgentinaSalesMap({ features, provinces, selectedProvince, onSelect }) {
+const ARGENTINA_PROVINCES = [
+  ['Jujuy', 'M82 20 L120 18 L130 48 L112 70 L78 62 Z', 100, 44],
+  ['Salta', 'M72 60 L112 70 L145 54 L176 68 L170 108 L122 120 L82 104 Z', 126, 88],
+  ['Formosa', 'M176 68 L238 72 L256 96 L218 112 L170 108 Z', 215, 91],
+  ['Chaco', 'M170 108 L218 112 L224 150 L176 158 L150 132 Z', 193, 133],
+  ['Misiones', 'M258 104 L278 92 L288 124 L274 160 L258 150 Z', 273, 127],
+  ['Corrientes', 'M224 150 L258 150 L274 160 L264 206 L230 214 L210 184 Z', 244, 181],
+  ['Santiago del Estero', 'M122 120 L170 108 L176 158 L166 202 L120 194 L108 154 Z', 144, 158],
+  ['Tucumán', 'M94 116 L122 120 L120 154 L94 150 Z', 107, 136],
+  ['Catamarca', 'M64 106 L94 116 L94 150 L108 154 L100 196 L64 190 L50 148 Z', 79, 153],
+  ['La Rioja', 'M64 190 L100 196 L108 228 L82 252 L54 230 Z', 81, 220],
+  ['Córdoba', 'M108 194 L166 202 L174 250 L150 286 L106 270 L82 252 L108 228 Z', 132, 239],
+  ['Santa Fe', 'M166 202 L210 184 L230 214 L216 274 L190 304 L174 250 Z', 199, 246],
+  ['Entre Ríos', 'M216 274 L248 264 L262 300 L238 334 L190 304 Z', 230, 299],
+  ['San Juan', 'M54 230 L82 252 L80 294 L48 310 L34 270 Z', 59, 270],
+  ['Mendoza', 'M48 310 L80 294 L106 310 L102 376 L66 402 L38 362 Z', 72, 348],
+  ['San Luis', 'M80 294 L106 270 L150 286 L148 334 L106 342 L106 310 Z', 117, 309],
+  ['Buenos Aires', 'M148 334 L190 304 L238 334 L274 354 L258 406 L218 438 L168 424 L138 386 Z', 209, 374],
+  ['La Pampa', 'M102 376 L138 386 L168 424 L154 462 L104 456 L66 402 Z', 119, 416],
+  ['Neuquén', 'M66 402 L104 456 L94 494 L54 486 L38 442 Z', 71, 455],
+  ['Río Negro', 'M94 494 L104 456 L154 462 L206 448 L226 488 L184 520 L126 526 Z', 158, 491],
+  ['Chubut', 'M126 526 L184 520 L226 488 L236 548 L206 582 L136 584 Z', 183, 551],
+  ['Santa Cruz', 'M136 584 L206 582 L226 618 L202 668 L150 676 L118 638 Z', 171, 628],
+  ['Tierra del Fuego', 'M150 694 L204 686 L218 706 L188 724 L154 718 Z', 185, 706],
+]
+
+function ArgentinaSalesMap({ provinces, selectedProvince, onSelect }) {
   const byProvince = useMemo(
     () => new Map((provinces || []).map((province) => [provinceKey(province.name), province])),
     [provinces],
   )
   const maximum = Math.max(0, ...(provinces || []).map((province) => Number(province.sales || 0)))
+  const caba = byProvince.get('CIUDAD AUTONOMA DE BUENOS AIRES')
 
   return (
     <div className="argentina-map-wrap">
-      <svg className="argentina-map" viewBox="-8 -8 456 706" role="img" aria-label="Mapa de ventas por provincia">
-        {features.map((feature, index) => {
-          const name = featureName(feature)
-          const path = featurePath(feature)
-          if (!path) return null
+      <svg className="argentina-map argentina-map-fixed" viewBox="0 0 320 745" role="img" aria-label="Mapa esquemático de ventas por provincia">
+        {ARGENTINA_PROVINCES.map(([name, path, labelX, labelY]) => {
           const province = byProvince.get(provinceKey(name))
           const sales = Number(province?.sales || 0)
           const active = selectedProvince && provinceKey(selectedProvince) === provinceKey(name)
           return (
-            <path
-              key={`${name}-${index}`}
-              d={path}
-              className={`argentina-province level-${colorLevel(sales, maximum)} ${active ? 'selected' : ''}`}
-              onClick={() => province && onSelect(province.name)}
-            >
-              <title>{`${name}: ${integer.format(sales)} ventas`}</title>
-            </path>
+            <g key={name} className="argentina-province-group">
+              <path
+                d={path}
+                className={`argentina-province level-${colorLevel(sales, maximum)} ${active ? 'selected' : ''}`}
+                onClick={() => province && onSelect(province.name)}
+              >
+                <title>{`${name}: ${integer.format(sales)} ventas`}</title>
+              </path>
+              {sales > 0 && <text x={labelX} y={labelY} className="argentina-map-sales" textAnchor="middle">{integer.format(sales)}</text>}
+            </g>
           )
         })}
         <circle
           className={`argentina-caba ${provinceKey(selectedProvince) === 'CIUDAD AUTONOMA DE BUENOS AIRES' ? 'selected' : ''}`}
-          cx={projectPoint(-58.38, -34.60)[0]}
-          cy={projectPoint(-58.38, -34.60)[1]}
-          r="5"
-          onClick={() => {
-            const caba = byProvince.get('CIUDAD AUTONOMA DE BUENOS AIRES')
-            if (caba) onSelect(caba.name)
-          }}
+          cx="244" cy="365" r="7"
+          onClick={() => caba && onSelect(caba.name)}
         >
-          <title>Ciudad Autónoma de Buenos Aires</title>
+          <title>{`CABA: ${integer.format(Number(caba?.sales || 0))} ventas`}</title>
         </circle>
+        {caba && <text x="257" y="369" className="argentina-map-caba-label">CABA · {integer.format(caba.sales || 0)}</text>}
       </svg>
       <div className="map-legend"><span>Menos ventas</span><div>{[1, 2, 3, 4, 5].map((level) => <i key={level} className={`level-${level}`}/>)}</div><span>Más ventas</span></div>
+      <small className="map-note">Mapa esquemático · los valores se toman del mismo reporte y ranking de ventas.</small>
     </div>
   )
 }
@@ -196,8 +177,6 @@ function Reports() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [selectedProvince, setSelectedProvince] = useState('')
-  const [mapFeatures, setMapFeatures] = useState([])
-  const [mapError, setMapError] = useState('')
 
   const loadReport = async (refresh = false) => {
     setLoading(true)
@@ -223,18 +202,6 @@ function Reports() {
     // cuando no hay cache para ese período o al tocar "Actualizar datos".
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [period])
-
-  useEffect(() => {
-    let cancelled = false
-    api(GEOJSON_URL)
-      .then((geojson) => {
-        if (!cancelled) setMapFeatures(Array.isArray(geojson.features) ? geojson.features : [])
-      })
-      .catch(() => {
-        if (!cancelled) setMapError('El mapa geográfico no pudo cargarse. El ranking y la lista siguen disponibles.')
-      })
-    return () => { cancelled = true }
-  }, [])
 
   const selected = report?.provinces?.find((province) => province.name === selectedProvince) || null
   const visibleRanking = (report?.provinces || []).filter((province) => province.name !== 'Sin provincia').slice(0, 10)
@@ -273,11 +240,7 @@ function Reports() {
           <div className="report-map-layout">
             <section className="report-section report-map-card">
               <header><div><span>Distribución</span><h2>Argentina</h2></div><small>Color más intenso = mayor cantidad de ventas</small></header>
-              {mapFeatures.length ? (
-                <ArgentinaSalesMap features={mapFeatures} provinces={report.provinces} selectedProvince={selectedProvince} onSelect={setSelectedProvince} />
-              ) : (
-                <div className="map-placeholder"><strong>Mapa no disponible</strong><span>{mapError || 'Cargando mapa…'}</span></div>
-              )}
+              <ArgentinaSalesMap provinces={report.provinces} selectedProvince={selectedProvince} onSelect={setSelectedProvince} />
             </section>
 
             <section className="report-section report-ranking-card">
