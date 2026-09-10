@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { formatCurrency } from '../components/SalesTable'
 import defaultClients from '../Data/BudgetClients.json'
 import defaultProducts from '../Data/BudgetProducts.json'
+import successSoundUrl from '../assets/panadero-success.wav'
 
 const CLIENTS_KEY = 'panadero-budget-clients'
 const PRODUCTS_KEY = 'panadero-budget-products'
@@ -48,6 +49,17 @@ function normalize(value) {
 
 function clean(value) {
   return String(value ?? '').trim()
+}
+
+
+function playSuccessSound() {
+  try {
+    const audio = new Audio(successSoundUrl)
+    audio.volume = 0.45
+    audio.play().catch(() => {})
+  } catch {
+    // El sonido es complementario y nunca debe bloquear una operación exitosa.
+  }
 }
 
 function noticeTone(message) {
@@ -605,6 +617,7 @@ function Budgets() {
         setNextNumber(Number(data.nextNumber) || requestedNumber + 1)
       }
       localStorage.setItem(BUDGETS_KEY, JSON.stringify(nextBudgets))
+      playSuccessSound()
       setNotice(`Presupuesto N.º ${String(requestedNumber).padStart(6, '0')} confirmado y guardado online.`)
     } catch (error) {
       setNotice(error.message)
@@ -650,6 +663,7 @@ function Budgets() {
       if (!response.ok) throw new Error(data.error || `No se pudo emitir la ${documentLabel}.`)
 
       setCommercialInvoice(data.invoice)
+      playSuccessSound()
       setNotice(`${documentLabel} ${data.invoice?.voucher?.formattedNumber || ''} autorizada por ARCA. CAE ${data.invoice?.cae || ''}.`)
       try {
         const sequenceResponse = await fetch(`${API_BASE}/arca/commercial-sequence?invoiceType=${invoiceType}`, { credentials: 'include' })

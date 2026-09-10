@@ -42,8 +42,11 @@ function provinceKey(value) {
 }
 
 function colorLevel(sales, maximum) {
-  if (!sales || !maximum) return 0
-  return Math.max(1, Math.min(5, Math.ceil((sales / maximum) * 5)))
+  const value = Number(sales || 0)
+  const max = Number(maximum || 0)
+  if (!value || !max) return 0
+  const ratio = Math.log1p(value) / Math.log1p(max)
+  return Math.max(1, Math.min(5, Math.ceil(ratio * 5)))
 }
 
 function Metric({ label, value, note }) {
@@ -173,7 +176,7 @@ function ArgentinaSalesMap({ svgText, provinces, selectedProvince, onSelect }) {
         dangerouslySetInnerHTML={{ __html: processedSvg }}
       />
       <div className="map-legend"><span>Menos ventas</span><div>{[1, 2, 3, 4, 5].map((level) => <i key={level} className={`level-${level}`}/>)}</div><span>Más ventas</span></div>
-      <small className="map-note">Mapa provincial real · los colores usan los mismos datos del ranking de ventas.</small>
+      <small className="map-note">Mapa provincial · amarillo más intenso = más ventas. La provincia seleccionada se destaca.</small>
     </div>
   )
 }
@@ -213,7 +216,7 @@ function Reports() {
 
 
   const selected = report?.provinces?.find((province) => province.name === selectedProvince) || null
-  const visibleRanking = (report?.provinces || []).filter((province) => province.name !== 'Sin provincia').slice(0, 10)
+  const visibleRanking = (report?.provinces || []).filter((province) => province.name !== 'Sin provincia')
 
   return (
     <main className="reports-page">
@@ -247,13 +250,13 @@ function Reports() {
           </section>
 
           <div className="report-map-layout">
-            <section className="report-section report-map-card">
+            <section className="report-section report-map-card report-flat-section">
               <header><div><span>Distribución</span><h2>Argentina</h2></div><small>Color más intenso = mayor cantidad de ventas</small></header>
               <ArgentinaSalesMap svgText={argentinaSvgRaw} provinces={report.provinces} selectedProvince={selectedProvince} onSelect={setSelectedProvince} />
             </section>
 
-            <section className="report-section report-ranking-card">
-              <header><div><span>Ranking</span><h2>Provincias</h2></div><small>Top 10 por cantidad de ventas</small></header>
+            <section className="report-section report-ranking-card report-flat-section">
+              <header><div><span>Ranking</span><h2>Provincias</h2></div><small>Todas · ordenadas por cantidad de ventas</small></header>
               <div className="province-ranking">
                 {visibleRanking.map((province, index) => (
                   <button key={province.name} type="button" className={selectedProvince === province.name ? 'active' : ''} onClick={() => setSelectedProvince(province.name)}>
@@ -266,7 +269,7 @@ function Reports() {
             </section>
           </div>
 
-          <section className="report-section province-detail-card">
+          <section className="report-section province-detail-card report-flat-section">
             <header>
               <div><span>Provincia seleccionada</span><h2>{selected?.name || 'Seleccioná una provincia'}</h2></div>
               {selected && <button className="ghost-button" type="button" onClick={() => exportExcel(report, selected.name)}>Exportar esta provincia</button>}

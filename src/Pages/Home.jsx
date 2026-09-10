@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Topbar from '../components/Topbar'
 import SalesTable, { formatCurrency } from '../components/SalesTable'
 import { sales as demoSales } from '../Data/Sales'
+import successSoundUrl from '../assets/panadero-success.wav'
 
 const API_BASE = 'https://api.panaderoapp.com/api'
 const ARCA_POINT_OF_SALE = 3
@@ -18,6 +19,17 @@ async function api(path, options) {
   const payload = await response.json().catch(() => ({}))
   if (!response.ok) throw new Error(payload.error || 'No se pudo comunicar con Panadero API')
   return payload
+}
+
+
+function playSuccessSound() {
+  try {
+    const audio = new Audio(successSoundUrl)
+    audio.volume = 0.45
+    audio.play().catch(() => {})
+  } catch {
+    // El sonido es complementario y nunca debe bloquear una factura exitosa.
+  }
 }
 
 function noticeTone(message) {
@@ -422,6 +434,7 @@ function Home() {
         ),
       )
       setInvoiceModal(null)
+      playSuccessSound()
       setNotice(
         `Venta facturada correctamente: ${invoice?.voucher?.formattedNumber || 'comprobante autorizado'}.`,
       )
