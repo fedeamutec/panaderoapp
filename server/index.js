@@ -828,10 +828,38 @@ app.get('/api/arca/last-voucher', async (req, res) => {
   }
 })
 
+
+const argentinaMapCachePath = path.join(process.cwd(), 'server', 'data', 'argentina-provincias.geojson')
+const ARGENTINA_MAP_SOURCE = 'https://infra.datos.gob.ar/catalog/modernizacion/dataset/7/distribution/7.12/download/provincias.geojson'
+
+app.get('/api/reports/argentina-map', requireAuth, async (_req, res) => {
+  try {
+    try {
+      const cached = await fs.readFile(argentinaMapCachePath, 'utf8')
+      res.type('application/geo+json').send(cached)
+      return
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error
+    }
+
+    const response = await fetch(ARGENTINA_MAP_SOURCE)
+    if (!response.ok) throw new Error(`No se pudo descargar el mapa (${response.status})`)
+    const geojson = await response.text()
+    JSON.parse(geojson)
+    await fs.mkdir(path.dirname(argentinaMapCachePath), { recursive: true })
+    await fs.writeFile(argentinaMapCachePath, geojson, 'utf8')
+    res.type('application/geo+json').send(geojson)
+  } catch (error) {
+    console.error('Argentina map error:', error)
+    res.status(500).json({ error: 'No se pudo cargar el mapa de Argentina' })
+  }
+})
+
 app.get('/api/reports/mercadolibre-customers', requireAuth, async (req, res) => {
   try {
     const period = String(req.query.period || '90d')
-    res.json(await getMercadoLibreCustomerReport({ period }))
+    const forceRefresh = String(req.query.refresh || '') === '1'
+    res.json(await getMercadoLibreCustomerReport({ period, forceRefresh }))
   } catch (error) {
     console.error('Mercado Libre customer report error:', error)
     res.status(500).json({ error: error.message })

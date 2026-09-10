@@ -2179,3 +2179,5 @@ body,
 @media (max-width: 1100px) { .report-map-layout { grid-template-columns:1fr; } .report-map-card, .report-ranking-card { min-height:unset; } .report-ranking-card { max-height:560px; overflow:auto; } }
 @media (max-width: 760px) { .report-map-header { align-items:flex-start; flex-direction:column; gap:14px; } .report-header-actions { width:100%; } .report-header-actions select, .report-header-actions .primary-button { flex:1; } .report-summary-grid, .province-kpis { grid-template-columns:repeat(2,minmax(0,1fr)); } .argentina-map-wrap { min-height:460px; } .argentina-map { height:400px; } }
 @media (max-width: 520px) { .report-summary-grid, .province-kpis { grid-template-columns:1fr; } .report-header-actions { align-items:stretch; flex-direction:column; } }
+
+.report-cache-note { margin: -2px 0 14px; color: #858585; font-size: 12px; }

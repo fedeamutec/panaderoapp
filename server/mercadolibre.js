@@ -673,9 +673,18 @@ function latestDate(left, right) {
   return new Date(right).getTime() > new Date(left).getTime() ? right : left
 }
 
-export async function getMercadoLibreCustomerReport({ period = '90d' } = {}) {
+export async function getMercadoLibreCustomerReport({ period = '90d', forceRefresh = false } = {}) {
   const store = await readStore()
   if (!store.account?.id) throw new Error('Mercado Libre no está conectado')
+
+  const cachedReport = store.reportCache?.customerMap?.[period]
+  if (!forceRefresh && cachedReport?.payload) {
+    return {
+      ...cachedReport.payload,
+      cached: true,
+      cachedAt: cachedReport.savedAt || cachedReport.payload.generatedAt || null,
+    }
+  }
 
   const token = await getAccessToken()
   const { from, to } = reportPeriodDates(period)
@@ -797,11 +806,12 @@ export async function getMercadoLibreCustomerReport({ period = '90d' } = {}) {
     })
     .sort((a, b) => b.sales - a.sales || b.amount - a.amount)
 
-  return {
+  const reportPayload = {
     ok: true,
     period,
     generatedAt: new Date().toISOString(),
     source: 'mercadolibre',
+    cached: false,
     summary: {
       sales: paidOrders.length,
       customers: globalCustomers.size,
@@ -814,6 +824,19 @@ export async function getMercadoLibreCustomerReport({ period = '90d' } = {}) {
     totalAvailable,
     truncated: rawOrders.length < totalAvailable,
   }
+
+  await updateStore((current) => ({
+    ...current,
+    reportCache: {
+      ...(current.reportCache || {}),
+      customerMap: {
+        ...(current.reportCache?.customerMap || {}),
+        [period]: { savedAt: new Date().toISOString(), payload: reportPayload },
+      },
+    },
+  }))
+
+  return reportPayload
 }
 
 export async function getStatus() {

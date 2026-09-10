@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 
 const API_BASE = 'https://api.panaderoapp.com/api'
-const GEOJSON_URL = 'https://apis.datos.gob.ar/georef/api/v2.0/provincias.geojson'
+const GEOJSON_URL = '/reports/argentina-map'
 
 const periods = [
   ['30d', '30 días'],
@@ -199,35 +199,34 @@ function Reports() {
   const [mapFeatures, setMapFeatures] = useState([])
   const [mapError, setMapError] = useState('')
 
-  useEffect(() => {
-    let cancelled = false
-    api(`/reports/mercadolibre-customers?period=${encodeURIComponent(period)}`)
-      .then((payload) => {
-        if (cancelled) return
-        setReport(payload)
-        const firstProvince = payload.provinces?.find((province) => province.name !== 'Sin provincia')
-        setSelectedProvince((current) => {
-          if (payload.provinces?.some((province) => province.name === current)) return current
-          return firstProvince?.name || ''
-        })
+  const loadReport = async (refresh = false) => {
+    setLoading(true)
+    setError('')
+    try {
+      const payload = await api(`/reports/mercadolibre-customers?period=${encodeURIComponent(period)}${refresh ? '&refresh=1' : ''}`)
+      setReport(payload)
+      const firstProvince = payload.provinces?.find((province) => province.name !== 'Sin provincia')
+      setSelectedProvince((current) => {
+        if (payload.provinces?.some((province) => province.name === current)) return current
+        return firstProvince?.name || ''
       })
-      .catch((requestError) => {
-        if (!cancelled) setError(requestError.message)
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
+    } catch (requestError) {
+      setError(requestError.message)
+    } finally {
+      setLoading(false)
+    }
+  }
 
-    return () => { cancelled = true }
+  useEffect(() => {
+    loadReport(false)
+    // El reporte queda cacheado en el servidor. Solo se consulta Mercado Libre
+    // cuando no hay cache para ese período o al tocar "Actualizar datos".
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [period])
 
   useEffect(() => {
     let cancelled = false
-    fetch(GEOJSON_URL)
-      .then((response) => {
-        if (!response.ok) throw new Error('No se pudo cargar el mapa')
-        return response.json()
-      })
+    api(GEOJSON_URL)
       .then((geojson) => {
         if (!cancelled) setMapFeatures(Array.isArray(geojson.features) ? geojson.features : [])
       })
@@ -248,16 +247,19 @@ function Reports() {
           <select value={period} onChange={(event) => { setLoading(true); setError(''); setPeriod(event.target.value) }} disabled={loading}>
             {periods.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
+          <button className="ghost-button" type="button" disabled={loading} onClick={() => loadReport(true)}>Actualizar datos</button>
           <button className="primary-button" type="button" disabled={!report?.provinces?.length} onClick={() => exportExcel(report, '')}>Exportar Excel</button>
         </div>
       </header>
 
       <div className="reports-content report-map-content">
-        {loading && <section className="report-state"><span className="detail-spinner"/>Analizando ventas y ubicaciones de Mercado Libre…</section>}
+        {loading && <section className="report-state"><span className="detail-spinner"/>Cargando mapa y reporte de clientes…</section>}
         {error && <section className="report-state error"><strong>No se pudo generar el reporte.</strong><span>{error}</span></section>}
 
         {!loading && !error && report && <>
           {report.truncated && <section className="report-warning">Se analizaron {integer.format(report.scannedOrders)} de {integer.format(report.totalAvailable)} operaciones disponibles. Para períodos con más de 1.000 operaciones conviene dividir el análisis por fechas.</section>}
+
+          <div className="report-cache-note">Datos del reporte: {report.cached ? 'guardados en Panadero' : 'actualizados desde Mercado Libre'} · {report.generatedAt ? new Date(report.generatedAt).toLocaleString('es-AR') : '—'}</div>
 
           <section className="report-section report-section-ml">
             <div className="report-grid report-summary-grid">
