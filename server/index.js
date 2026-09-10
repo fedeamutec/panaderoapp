@@ -830,22 +830,37 @@ app.get('/api/arca/last-voucher', async (req, res) => {
 
 
 const argentinaMapCachePath = path.join(process.cwd(), 'server', 'data', 'argentina-provincias.geojson')
-const ARGENTINA_MAP_SOURCE = 'https://infra.datos.gob.ar/catalog/modernizacion/dataset/7/distribution/7.12/download/provincias.geojson'
+const ARGENTINA_MAP_SOURCE = 'https://apis.datos.gob.ar/georef/api/v2.0/provincias.geojson'
+
+function isArgentinaPolygonMap(value) {
+  return value?.type === 'FeatureCollection'
+    && Array.isArray(value.features)
+    && value.features.length >= 24
+    && value.features.some((feature) => ['Polygon', 'MultiPolygon'].includes(feature?.geometry?.type))
+}
 
 app.get('/api/reports/argentina-map', requireAuth, async (_req, res) => {
   try {
     try {
       const cached = await fs.readFile(argentinaMapCachePath, 'utf8')
-      res.type('application/geo+json').send(cached)
-      return
+      const parsedCache = JSON.parse(cached)
+      if (isArgentinaPolygonMap(parsedCache)) {
+        res.type('application/geo+json').send(cached)
+        return
+      }
+      // La fuente anterior devolvía puntos/centroides. Si quedó cacheada,
+      // la descartamos automáticamente y descargamos el mapa poligonal correcto.
+      await fs.rm(argentinaMapCachePath, { force: true })
     } catch (error) {
-      if (error?.code !== 'ENOENT') throw error
+      if (error?.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error
     }
 
     const response = await fetch(ARGENTINA_MAP_SOURCE)
     if (!response.ok) throw new Error(`No se pudo descargar el mapa (${response.status})`)
     const geojson = await response.text()
-    JSON.parse(geojson)
+    const parsed = JSON.parse(geojson)
+    if (!isArgentinaPolygonMap(parsed)) throw new Error('La fuente no devolvió polígonos de provincias')
+
     await fs.mkdir(path.dirname(argentinaMapCachePath), { recursive: true })
     await fs.writeFile(argentinaMapCachePath, geojson, 'utf8')
     res.type('application/geo+json').send(geojson)
