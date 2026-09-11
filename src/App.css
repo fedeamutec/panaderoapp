@@ -2212,17 +2212,17 @@ body,
 .province-ranking button:hover { background:color-mix(in srgb,var(--accent) 5%,transparent); }
 .province-ranking button.active { background:color-mix(in srgb,var(--accent) 10%,transparent); box-shadow:inset 2px 0 var(--accent); }
 .argentina-map-wrap { background:transparent; }
-.argentina-map-svg-host { width:min(100%,455px); height:540px; }
-.argentina-map-svg-host > svg { filter:none !important; transform:none !important; }
-.argentina-province { stroke:#0c0c0c; stroke-width:1.05; vector-effect:non-scaling-stroke; filter:none !important; opacity:1; }
+.argentina-map-svg-host { width:min(100%,400px); height:auto; aspect-ratio:545 / 825; }
+.argentina-map-svg-host > svg { width:100%; height:100%; filter:none !important; transform:none !important; shape-rendering:geometricPrecision; }
+.argentina-province { stroke:#0c0c0c; stroke-width:.9; stroke-linejoin:round; stroke-linecap:round; vector-effect:non-scaling-stroke; filter:none !important; opacity:1; }
 .argentina-province.level-0 { fill:#242218; }
 .argentina-province.level-1 { fill:color-mix(in srgb,var(--accent) 28%,#2b2719); }
 .argentina-province.level-2 { fill:color-mix(in srgb,var(--accent) 45%,#2b2719); }
 .argentina-province.level-3 { fill:color-mix(in srgb,var(--accent) 62%,#2b2719); }
 .argentina-province.level-4 { fill:color-mix(in srgb,var(--accent) 78%,#2b2719); }
 .argentina-province.level-5 { fill:color-mix(in srgb,var(--accent) 92%,#2b2719); }
-.argentina-province[class*="level-"]:hover { stroke:#fff1c3; stroke-width:1.7; }
-.argentina-province.selected { fill:#f4b942 !important; stroke:#fff4cf !important; stroke-width:2.2 !important; filter:none !important; }
+.argentina-province[class*="level-"]:hover { stroke:#fff1c3; stroke-width:1.35; }
+.argentina-province.selected { fill:#f4b942 !important; stroke:#fff4cf !important; stroke-width:1.65 !important; stroke-linejoin:round; stroke-linecap:round; filter:none !important; }
 .map-legend i.level-1 { background:color-mix(in srgb,var(--accent) 28%,#2b2719); }
 .map-legend i.level-2 { background:color-mix(in srgb,var(--accent) 45%,#2b2719); }
 .map-legend i.level-3 { background:color-mix(in srgb,var(--accent) 62%,#2b2719); }
