@@ -2212,7 +2212,7 @@ body,
 .province-ranking button:hover { background:color-mix(in srgb,var(--accent) 5%,transparent); }
 .province-ranking button.active { background:color-mix(in srgb,var(--accent) 10%,transparent); box-shadow:inset 2px 0 var(--accent); }
 .argentina-map-wrap { background:transparent; }
-.argentina-map-svg-host { width:min(100%,400px); height:auto; aspect-ratio:545 / 825; }
+.argentina-map-svg-host { width:min(100%,400px); height:auto; aspect-ratio:440 / 920; }
 .argentina-map-svg-host > svg { width:100%; height:100%; filter:none !important; transform:none !important; shape-rendering:geometricPrecision; }
 .argentina-province { stroke:#0c0c0c; stroke-width:.9; stroke-linejoin:round; stroke-linecap:round; vector-effect:non-scaling-stroke; filter:none !important; opacity:1; }
 .argentina-province.level-0 { fill:#242218; }

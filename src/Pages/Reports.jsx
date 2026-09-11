@@ -126,8 +126,12 @@ function ArgentinaSalesMap({ svgText, provinces, selectedProvince, onSelect }) {
     if (doc.querySelector('parsererror')) return ''
     const svg = doc.documentElement
     doc.querySelectorAll('style').forEach((style) => style.remove())
+    doc.querySelector('#points')?.remove()
+    doc.querySelector('#label_points')?.remove()
     svg.removeAttribute('width')
     svg.removeAttribute('height')
+    svg.setAttribute('viewBox', '280 30 440 920')
+    svg.setAttribute('preserveAspectRatio', 'xMidYMid meet')
     svg.setAttribute('class', 'argentina-map argentina-map-real')
     svg.setAttribute('role', 'img')
     svg.setAttribute('aria-label', 'Mapa real de ventas por provincia de Argentina')
