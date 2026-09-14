@@ -84,7 +84,7 @@ export async function generateCsr() {
     ])
     await fs.chmod(keyPath, 0o600)
   } catch (error) {
-    throw new Error(`No se pudo generar el CSR: ${error.stderr || error.message}`)
+    throw new Error(`No se pudo generar el CSR: ${error.stderr || error.message}`, { cause: error })
   }
 
   return { csr: await fs.readFile(csrPath, 'utf8'), ...(await getArcaStatus()) }

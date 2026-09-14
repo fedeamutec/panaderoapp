@@ -8,6 +8,7 @@ export const ARCA_ENV = String(process.env.ARCA_ENV || 'testing').toLowerCase()
 export const ARCA_ALIAS = process.env.ARCA_ALIAS || 'panadero-test'
 export const ARCA_POINT_OF_SALE = Number(process.env.ARCA_POINT_OF_SALE || 3)
 export const ARCA_SERVICE = process.env.ARCA_SERVICE || 'wsfe'
+export const ARCA_PADRON_SERVICE = process.env.ARCA_PADRON_SERVICE || 'ws_sr_padron_a5'
 export const ARCA_DATA_DIR = process.env.ARCA_DATA_DIR
   ? path.resolve(process.env.ARCA_DATA_DIR)
   : path.join(currentDir, 'data')
