@@ -265,6 +265,37 @@ async function mapWithConcurrency(values, concurrency, mapper) {
   return results
 }
 
+function onlyDigits(value) {
+  return String(value ?? '').replace(/\D/g, '')
+}
+
+function additionalInfoValue(additionalInfo, names) {
+  if (Array.isArray(additionalInfo)) {
+    const match = additionalInfo.find((item) => names.includes(String(item?.type || item?.name || '').toLowerCase()))
+    return match?.value || match?.description || ''
+  }
+  if (!additionalInfo || typeof additionalInfo !== 'object') return ''
+  for (const name of names) {
+    if (additionalInfo[name]) return additionalInfo[name]
+  }
+  return ''
+}
+
+export function selectFiscalLegalName({ billingInfo = {}, documentType = '' } = {}) {
+  const billing = billingInfo?.billing_info || billingInfo
+  const additionalInfo = billing?.additional_info || billingInfo?.additional_info
+  const candidates = [
+    billing?.business_name,
+    billing?.businessName,
+    billing?.legal_name,
+    billing?.legalName,
+    additionalInfoValue(additionalInfo, ['business_name', 'businessname', 'legal_name', 'legalname', 'razon_social', 'razonsocial']),
+  ].map((value) => String(value || '').trim()).filter(Boolean)
+
+  if (String(documentType).toUpperCase().includes('CUIT')) return candidates[0] || ''
+  return ''
+}
+
 function normalizeOrder(order, fiscalInfo = {}) {
   const buyerName = [
     order.buyer?.first_name,
@@ -402,8 +433,9 @@ function buildOrderDetail(order, shipment, billingInfo, fiscalInfo = {}) {
       id: order.buyer?.id ? String(order.buyer.id) : null,
       nickname: order.buyer?.nickname || null,
       name: buyerName || order.buyer?.nickname || 'Sin datos',
+      fiscalLegalName: selectFiscalLegalName({ billingInfo, documentType }),
       documentType,
-      documentNumber: String(documentNumber),
+      documentNumber: String(documentType.toUpperCase().includes('CUIT') ? onlyDigits(documentNumber) : documentNumber),
       phone,
       email: order.buyer?.email || null,
     },
@@ -559,7 +591,7 @@ export async function getOrderDetail(orderId) {
   const order = await apiFetch(`/orders/${safeOrderId}`)
 
   let shipment = null
-  let billingInfo = null
+  let billingInfo
 
   if (order.shipping?.id) {
     try {

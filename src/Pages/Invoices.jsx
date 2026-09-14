@@ -257,6 +257,7 @@ function Invoices({ onNavigateToSales }) {
   const [query, setQuery] = useState('')
   const [typeFilter, setTypeFilter] = useState('all')
   const [reportMonth, setReportMonth] = useState('')
+  const [creditNoteLoading, setCreditNoteLoading] = useState('')
 
   const loadInvoices = useCallback(async ({ refresh = false } = {}) => {
     if (refresh) setRefreshing(true)
@@ -285,7 +286,8 @@ function Invoices({ onNavigateToSales }) {
   }, [])
 
   useEffect(() => {
-    loadInvoices()
+    const timer = setTimeout(() => loadInvoices(), 0)
+    return () => clearTimeout(timer)
   }, [loadInvoices])
 
   const rows = useMemo(
@@ -305,9 +307,37 @@ function Invoices({ onNavigateToSales }) {
       pdfPath: invoice.source === 'commercial'
         ? `/arca/commercial-invoices/${encodeURIComponent(invoice.id || '')}/pdf`
         : `/arca/sale-invoices/${encodeURIComponent(invoice.orderId || '')}/pdf`,
+      invoice,
     })),
     [invoices],
   )
+
+  const issueCreditNote = async (invoice) => {
+    const invoiceId = String(invoice.id || invoice.orderId || '')
+    if (!invoiceId || !invoice.cae || !invoice.voucher?.voucherType) return
+    const confirmed = window.confirm(
+      `Se emitirá una Nota de crédito electrónica asociada a ${invoice.voucher.formattedNumber || 'la factura'} con ARCA. Esta operación fiscal no se puede deshacer.\n\n¿Querés continuar?`,
+    )
+    if (!confirmed) return
+
+    setCreditNoteLoading(invoiceId)
+    setNotice('')
+    try {
+      const payload = await api(`/arca/invoices/${encodeURIComponent(invoiceId)}/credit-note`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmation: `EMITIR_NOTA_CREDITO_${invoiceId}` }),
+      })
+      setInvoices((current) => current.map((item) => String(item.id || item.orderId) === invoiceId
+        ? { ...item, creditNote: payload.creditNote }
+        : item))
+      setNotice(`Nota de crédito autorizada: ${payload.creditNote?.voucher?.formattedNumber || 'comprobante autorizado'}.`)
+    } catch (error) {
+      setNotice(error.message)
+    } finally {
+      setCreditNoteLoading('')
+    }
+  }
 
   const reportMonths = useMemo(() => {
     const months = [...new Set(invoices.map((invoice) => invoiceFiscalDate(invoice).monthKey).filter(Boolean))]
@@ -599,6 +629,28 @@ function Invoices({ onNavigateToSales }) {
                         >
                           PDF
                         </a>
+                        {row.invoice.cae && row.invoice.voucher?.voucherType && (
+                          row.invoice.creditNote ? (
+                            <a
+                              className="registry-action-link"
+                              href={`${API_BASE}/arca/invoices/${encodeURIComponent(String(row.invoice.id || row.invoice.orderId))}/credit-note/pdf`}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              NC
+                            </a>
+                          ) : (
+                            <button
+                              type="button"
+                              className="registry-action-link"
+                              onClick={() => issueCreditNote(row.invoice)}
+                              disabled={creditNoteLoading === String(row.invoice.id || row.invoice.orderId)}
+                              title="Emitir Nota de crédito electrónica"
+                            >
+                              {creditNoteLoading === String(row.invoice.id || row.invoice.orderId) ? '…' : 'NC'}
+                            </button>
+                          )
+                        )}
                       </div>
                     </td>
                   </tr>

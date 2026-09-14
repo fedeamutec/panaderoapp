@@ -192,6 +192,12 @@ function documentTypeCode(buyer = {}) {
   return 99
 }
 
+function receiverDisplayName(buyer = {}) {
+  return documentTypeCode(buyer) === 80
+    ? (buyer.fiscalLegalName || buyer.name || 'Receptor CUIT')
+    : (buyer.name || 'Consumidor final')
+}
+
 function invoiceNumber(voucher = {}) {
   const direct = Number(voucher.number || voucher.voucherNumber || voucher.cbteDesde || voucher.cbteHasta)
   if (Number.isFinite(direct) && direct > 0) return direct
@@ -334,9 +340,13 @@ export function buildInvoicePdf(invoice) {
   line()
 
   text('RECEPTOR', 48, 11, true)
-  row('Razon social / Nombre', buyer.name || 'Consumidor final')
+  row('Razon social / Nombre', receiverDisplayName(buyer))
   row('Documento', [buyer.documentType, buyer.documentNumber].filter(Boolean).join(' ') || 'Sin identificar')
   row('Condicion IVA', invoice.receiverVatCondition?.description || buyer.taxCondition || (voucher.voucherType === 1 ? 'Responsable Inscripto' : 'Consumidor Final'))
+  if (invoice.associatedInvoice?.voucher) {
+    const associated = invoice.associatedInvoice.voucher
+    row('Comprobante asociado', `${associated.voucherTypeDescription || 'Factura'} ${associated.formattedNumber || '—'}`)
+  }
 
   if (snapshot.address) {
     const address = [snapshot.address.addressLine, snapshot.address.city, snapshot.address.state]

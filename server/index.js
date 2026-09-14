@@ -16,7 +16,9 @@ import {
 } from './mercadolibre.js'
 import { generateCsr, getArcaStatus, readCsr, saveCertificate } from './arca/certificates.js'
 import { testArcaConnection } from './arca/wsaa.js'
+import { getPersonaByCuit, normalizeCuit } from './arca/padron.js'
 import {
+  createCreditNote,
   createSaleInvoice,
   createTestInvoice,
   getLastAuthorizedVoucher,
@@ -112,6 +114,24 @@ function commercialInvoiceItems(items = []) {
 
 function commercialInvoiceTotal(items = []) {
   return Math.round(items.reduce((sum, item) => sum + Number(item.subtotal || 0), 0) * 100) / 100
+}
+
+async function resolveFiscalReceiverName({ buyer = {}, requestId }) {
+  const identity = documentIdentity(buyer)
+  if (identity.documentType !== 'CUIT') return { name: '', source: null, cuit: '' }
+  const suppliedName = String(buyer.fiscalLegalName || buyer.businessName || buyer.business_name || '').trim()
+  if (suppliedName) return { name: suppliedName, source: 'mercadolibre', cuit: identity.documentNumber }
+
+  try {
+    const result = await getPersonaByCuit(normalizeCuit(identity.documentNumber))
+    return { name: result.legalName, source: result.source, cuit: result.cuit }
+  } catch (error) {
+    const accepted = String(buyer.fiscalNameConfirmation || '') === `ACEPTO_EMITIR_SIN_RAZON_SOCIAL_${requestId}`
+    if (!accepted) {
+      throw new Error(`No se pudo obtener la razón social fiscal del CUIT ${identity.documentNumber}: ${error.message}. Para continuar sin ella, confirmá explícitamente la emisión.`, { cause: error })
+    }
+    return { name: '', source: 'explicit-fallback', cuit: identity.documentNumber, warning: error.message }
+  }
 }
 
 app.get('/api/exchange/bna', async (_req, res) => {
@@ -539,6 +559,7 @@ app.post('/api/arca/commercial-invoice', async (req, res) => {
     if (!items.length) throw new Error('Agregá al menos un producto antes de emitir.')
     const amount = commercialInvoiceTotal(items)
     if (!Number.isFinite(amount) || amount <= 0) throw new Error('El total de la factura no es válido.')
+    const fiscalReceiver = await resolveFiscalReceiverName({ buyer: client, requestId })
 
     const invoices = await readSaleInvoices()
     const duplicate = invoices.find((item) => item.source === 'commercial' && item.commercialRequestId === requestId)
@@ -585,6 +606,7 @@ app.post('/api/arca/commercial-invoice', async (req, res) => {
       brand: req.body?.brand || null,
       buyer: {
         name: client.legalName || client.name || 'Cliente',
+        fiscalLegalName: fiscalReceiver.name || null,
         documentType: identity.documentType,
         documentNumber: identity.documentNumber,
         taxCondition: client.taxCondition || '',
@@ -598,6 +620,7 @@ app.post('/api/arca/commercial-invoice', async (req, res) => {
           zipCode: client.postalCode || '',
         },
         amounts: { total: amount },
+        receiverFiscalName: fiscalReceiver.name || null,
         accountNickname: req.body?.brand?.name || process.env.ML_ACCOUNT_NAME || 'Panadero',
       },
       createdAt: new Date().toISOString(),
@@ -608,6 +631,7 @@ app.post('/api/arca/commercial-invoice', async (req, res) => {
       result: result.result,
       observations: result.observations || [],
       receiverVatCondition: vatCondition,
+      fiscalReceiver,
     }
 
     invoices.push(invoice)
@@ -682,6 +706,7 @@ app.post('/api/arca/sale-invoice', async (req, res) => {
     }
 
     const buyer = detail.buyer || {}
+    const fiscalReceiver = await resolveFiscalReceiverName({ buyer, requestId: orderId })
     const result = await createSaleInvoice({
       pointOfSale: ARCA_POINT_OF_SALE,
       amount,
@@ -693,9 +718,11 @@ app.post('/api/arca/sale-invoice', async (req, res) => {
     })
 
     const invoice = {
+      id: `sale-${orderId}`,
       orderId,
       buyer: {
         name: buyer.name || null,
+        fiscalLegalName: fiscalReceiver.name || null,
         documentType: buyer.documentType || null,
         documentNumber: buyer.documentNumber || null,
       },
@@ -704,6 +731,7 @@ app.post('/api/arca/sale-invoice', async (req, res) => {
         address: detail.address || null,
         amounts: detail.amounts || { total: amount },
         accountNickname: detail.accountNickname || null,
+        receiverFiscalName: fiscalReceiver.name || null,
       },
       createdAt: new Date().toISOString(),
       environment: result.environment,
@@ -712,6 +740,7 @@ app.post('/api/arca/sale-invoice', async (req, res) => {
       caeExpirationDate: result.caeExpirationDate,
       result: result.result,
       observations: result.observations || [],
+      fiscalReceiver,
     }
 
     invoices.push(invoice)
@@ -792,6 +821,63 @@ app.post('/api/arca/sale-invoices/:orderId/send-to-mercadolibre', async (req, re
   } catch (error) {
     console.error('Retry Mercado Libre invoice upload error:', error)
     res.status(502).json({ ok: false, error: error.message })
+  }
+})
+
+app.post('/api/arca/invoices/:invoiceId/credit-note', async (req, res) => {
+  try {
+    const invoiceId = String(req.params.invoiceId || '').trim()
+    const invoices = await readSaleInvoices()
+    const index = invoices.findIndex((item) => String(item.id || item.orderId) === invoiceId)
+    if (index === -1) return res.status(404).json({ ok: false, error: 'No se encontró la factura original.' })
+
+    const originalInvoice = invoices[index]
+    if (originalInvoice.accountEmail && originalInvoice.accountEmail !== req.user.email) {
+      return res.status(403).json({ ok: false, error: 'La factura pertenece a otra cuenta.' })
+    }
+    if (originalInvoice.creditNote) {
+      return res.status(409).json({ ok: false, error: 'Esta factura ya tiene una Nota de crédito asociada.', creditNote: originalInvoice.creditNote })
+    }
+
+    const result = await createCreditNote({
+      originalInvoice,
+      confirmation: req.body?.confirmation,
+    })
+    const creditNote = {
+      id: `credit-note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      source: 'credit-note',
+      originalInvoiceId: originalInvoice.id || originalInvoice.orderId,
+      originalInvoiceNumber: originalInvoice.voucher.formattedNumber,
+      associatedInvoice: originalInvoice,
+      buyer: originalInvoice.buyer,
+      saleSnapshot: originalInvoice.saleSnapshot,
+      receiverVatCondition: originalInvoice.receiverVatCondition,
+      ...result,
+      issuedAt: new Date().toISOString(),
+    }
+    invoices[index] = { ...originalInvoice, creditNote }
+    await writeSaleInvoices(invoices)
+    res.json({ ok: true, invoice: invoices[index], creditNote })
+  } catch (error) {
+    console.error('ARCA credit note error:', error)
+    res.status(400).json({ ok: false, error: error.message })
+  }
+})
+
+app.get('/api/arca/invoices/:invoiceId/credit-note/pdf', async (req, res) => {
+  try {
+    const invoiceId = String(req.params.invoiceId || '').trim()
+    const invoices = await readSaleInvoices()
+    const invoice = invoices.find((item) => String(item.id || item.orderId) === invoiceId)
+    if (!invoice?.creditNote) return res.status(404).json({ ok: false, error: 'No se encontró la Nota de crédito.' })
+    const pdf = buildInvoicePdf(invoice.creditNote)
+    const filename = `Nota-de-credito-${invoice.creditNote.voucher?.formattedNumber || invoiceId}.pdf`
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`)
+    res.send(pdf)
+  } catch (error) {
+    console.error('Credit note PDF error:', error)
+    res.status(500).json({ ok: false, error: error.message })
   }
 })
 
