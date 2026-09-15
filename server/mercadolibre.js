@@ -403,6 +403,9 @@ function buildOrderDetail(order, shipment, billingInfo, fiscalInfo = {}) {
   const taxCondition = typeof taxConditionValue === 'object'
     ? taxConditionValue.description || taxConditionValue.name || taxConditionValue.value || ''
     : String(taxConditionValue || '').trim()
+  const taxConditionId = typeof taxConditionValue === 'object'
+    ? Number(taxConditionValue.id || taxConditionValue.code || taxConditionValue.value) || null
+    : null
 
   const phone =
     receiverAddress?.receiver_phone
@@ -458,6 +461,7 @@ function buildOrderDetail(order, shipment, billingInfo, fiscalInfo = {}) {
       documentType,
       documentNumber: String(documentType.toUpperCase().includes('CUIT') ? onlyDigits(documentNumber) : documentNumber),
       taxCondition,
+      taxConditionId,
       phone,
       email: order.buyer?.email || null,
     },
