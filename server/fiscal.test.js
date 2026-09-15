@@ -34,6 +34,7 @@ assert.deepEqual(normalizeBillingInfoResponse({
     additional_info: [{ type: 'taxpayer_type', value: { id: 1, description: 'IVA Responsable Inscripto' } }],
   },
 }), {
+  __normalizedBillingInfo: true,
   raw: {
     billing_info: {
       business_name: 'ACME SRL',
@@ -95,6 +96,31 @@ assert.equal(normalizeBillingInfoResponse({
     taxpayer_type: 1,
   },
 }).taxpayerTypeId, 1)
+
+const normalizedBilling = normalizeBillingInfoResponse({
+  billing_info: {
+    additional_info: [
+      { type: 'BUSINESS_NAME', value: 'EMPRESA REAL SA' },
+      { type: 'IDENTIFICATION_TYPE', value: 'CUIT' },
+      { type: 'IDENTIFICATION', value: '30-15956752-0' },
+      { type: 'TAXPAYER_TYPE', value: { id: 1, description: 'IVA Responsable Inscripto' } },
+    ],
+  },
+})
+assert.equal(normalizedBilling.legalName, 'EMPRESA REAL SA')
+assert.equal(normalizedBilling.documentType, 'CUIT')
+assert.equal(normalizedBilling.documentNumber, '30159567520')
+assert.equal(normalizeBillingInfoResponse(normalizedBilling), normalizedBilling)
+assert.equal(normalizeBillingInfoResponse({
+  billing_info: {
+    additional_info: [
+      { type: 'FIRST_NAME', value: 'Juan' },
+      { type: 'LAST_NAME', value: 'Pérez' },
+      { type: 'IDENTIFICATION_TYPE', value: 'DNI' },
+      { type: 'IDENTIFICATION', value: '12345678' },
+    ],
+  },
+}).fullName, 'Juan Pérez')
 
 assert.deepEqual(associatedVoucherFor({ cae: '123', voucher: { voucherType: 1, pointOfSale: 3, voucherNumber: 42 } }), {
   type: 1,
