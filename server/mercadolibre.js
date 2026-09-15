@@ -238,6 +238,12 @@ export function normalizeBillingInfoResponse(payload = {}) {
     || payload.name
     || billingField(additionalInfo, ['full_name', 'fullname', 'name'])
 
+  const address = billing.address
+    || payload.address
+    || billing.billing_address
+    || payload.billing_address
+    || {}
+
   return {
     __normalizedBillingInfo: true,
     raw: payload,
@@ -249,6 +255,13 @@ export function normalizeBillingInfoResponse(payload = {}) {
     documentNumber: String(billingScalar(documentNumber) || '').replace(/\D/g, ''),
     taxpayerTypeId,
     taxpayerDescription,
+    address: {
+      streetName: String(billingScalar(address.street_name || address.streetName || billingField(additionalInfo, ['street_name', 'streetname'])) || '').trim(),
+      streetNumber: String(billingScalar(address.street_number || address.streetNumber || billingField(additionalInfo, ['street_number', 'streetnumber'])) || '').trim(),
+      city: String(billingScalar(address.city_name || address.city || billingField(additionalInfo, ['city_name', 'city'])) || '').trim(),
+      state: String(billingScalar(address.state_name || address.state || billingField(additionalInfo, ['state_name', 'state'])) || '').trim(),
+      zipCode: String(billingScalar(address.zip_code || address.zipCode || billingField(additionalInfo, ['zip_code', 'zipcode'])) || '').trim(),
+    },
   }
 }
 
@@ -265,6 +278,7 @@ function mergeBillingSources(...sources) {
     documentNumber: first('documentNumber'),
     taxpayerTypeId: first('taxpayerTypeId') || null,
     taxpayerDescription: first('taxpayerDescription'),
+    address: normalized.find((item) => Object.values(item.address || {}).some(Boolean))?.address || primary.address,
   }
 }
 
@@ -295,9 +309,32 @@ function sanitizedBillingFields(normalized) {
   }
 }
 
-async function getBillingInfoForOrder(orderId, suppliedToken) {
-  const token = suppliedToken || await getAccessToken()
-  const endpoint = `/orders/${encodeURIComponent(String(orderId))}/billing_info`
+function billingInfoReference(order = {}, payload = {}) {
+  const billing = payload?.billing_info || payload || {}
+  return String(
+    order.billing_info_id
+    || order.billingInfoId
+    || order.billing_info?.id
+    || order.buyer?.billing_info_id
+    || order.buyer?.billing_info?.id
+    || billing.id
+    || billing.billing_info_id
+    || payload?.billing_info_id
+    || ''
+  ).trim()
+}
+
+function billingInfoHasUsefulData(normalized = {}) {
+  return Boolean(
+    normalized.documentNumber
+    || normalized.legalName
+    || normalized.fullName
+    || normalized.taxpayerTypeId
+    || normalized.taxpayerDescription
+  )
+}
+
+async function fetchBillingEndpoint(endpoint, token) {
   const response = await fetch(`${API_URL}${endpoint}`, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -314,12 +351,45 @@ async function getBillingInfoForOrder(orderId, suppliedToken) {
     fields: sanitizedBillingFields(normalized),
     structure: sanitizedBillingStructure(payload),
   })
-  if (!response.ok) {
-    const error = new Error(payload.message || payload.error || `Mercado Libre billing_info respondió ${response.status}`)
-    error.status = response.status
-    throw error
+  return { response, payload, normalized }
+}
+
+async function getBillingInfoForOrder(orderOrId, suppliedToken) {
+  const token = suppliedToken || await getAccessToken()
+  const order = typeof orderOrId === 'object' && orderOrId !== null
+    ? orderOrId
+    : { id: orderOrId }
+  const orderId = order.id
+  const legacyEndpoint = `/orders/${encodeURIComponent(String(orderId))}/billing_info`
+  const legacy = await fetchBillingEndpoint(legacyEndpoint, token)
+
+  const siteId = String(order.site_id || order.siteId || 'MLA').trim().toUpperCase()
+  const reference = billingInfoReference(order, legacy.payload)
+  if (siteId && reference) {
+    const modernEndpoint = `/orders/billing-info/${encodeURIComponent(siteId)}/${encodeURIComponent(reference)}`
+    const modern = await fetchBillingEndpoint(modernEndpoint, token)
+    if (modern.response.ok && billingInfoHasUsefulData(modern.normalized)) {
+      return mergeBillingSources(modern.normalized, legacy.normalized, order.billing_info, order.buyer?.billing_info)
+    }
+    if (!legacy.response.ok && !modern.response.ok) {
+      const message = modern.payload.message || modern.payload.error || legacy.payload.message || legacy.payload.error
+      const error = new Error(message || `Mercado Libre billing_info respondió ${modern.response.status}`)
+      error.status = modern.response.status
+      throw error
+    }
   }
-  return normalized
+
+  if (legacy.response.ok && billingInfoHasUsefulData(legacy.normalized)) return legacy.normalized
+  if (billingInfoHasUsefulData(normalizeBillingInfoResponse(order.billing_info || order.buyer?.billing_info || {}))) {
+    return mergeBillingSources(order.billing_info, order.buyer?.billing_info)
+  }
+
+  const reason = reference
+    ? 'Mercado Libre no devolvió campos fiscales para esta venta'
+    : 'La venta no incluyó el identificador billing_info_id requerido por Mercado Libre'
+  const error = new Error(reason)
+  error.status = legacy.response.status
+  throw error
 }
 
 function fiscalDocumentReference(order = {}) {
@@ -639,6 +709,7 @@ function buildOrderDetail(order, shipment, billingInfo, fiscalInfo = {}) {
       documentNumber: String(documentType.toUpperCase().includes('CUIT') ? onlyDigits(documentNumber) : documentNumber),
       taxCondition,
       taxConditionId,
+      address: normalizedBilling.address || null,
     },
 
     address: receiverAddress
@@ -806,7 +877,7 @@ export async function getOrderDetail(orderId) {
 
   let billingInfoError = null
   try {
-    billingInfo = await getBillingInfoForOrder(orderId, token)
+    billingInfo = await getBillingInfoForOrder(order, token)
   } catch (error) {
     billingInfo = null
     billingInfoError = error.message
@@ -1123,7 +1194,7 @@ export async function syncOrders({ page = 1, pageSize = 50 } = {}) {
     async (order) => {
       const [fiscalInfo, billingResult] = await Promise.all([
         readFiscalDocumentsForOrder(order, token),
-        getBillingInfoForOrder(order.id, token).catch((error) => ({ error: error.message })),
+        getBillingInfoForOrder(order, token).catch((error) => ({ error: error.message })),
       ])
       return { fiscalInfo, billingInfo: billingResult }
     },
