@@ -163,18 +163,19 @@ async function apiFetch(pathname, suppliedToken) {
 }
 
 function billingInfoAdditionalEntries(value) {
-  if (Array.isArray(value)) return value
+  if (Array.isArray(value)) return value.flatMap((entry) => billingInfoAdditionalEntries(entry))
   if (!value || typeof value !== 'object') return []
-  return Object.entries(value).map(([name, entry]) => ({
-    name,
-    type: name,
-    value: entry,
-  }))
+  if (value.type || value.name) return [value]
+  return Object.entries(value).flatMap(([name, entry]) => [
+    { name, type: name, value: entry },
+    ...(entry && typeof entry === 'object' ? billingInfoAdditionalEntries(entry) : []),
+  ])
 }
 
 function billingField(additionalInfo, names) {
-  const normalizedNames = names.map((name) => String(name).toLowerCase())
-  const entry = billingInfoAdditionalEntries(additionalInfo).find((item) => normalizedNames.includes(String(item?.type || item?.name || '').toLowerCase()))
+  const key = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+  const normalizedNames = names.map(key)
+  const entry = billingInfoAdditionalEntries(additionalInfo).find((item) => normalizedNames.includes(key(item?.type || item?.name)))
   return entry?.value ?? entry?.description ?? entry?.nameValue ?? ''
 }
 
@@ -248,6 +249,22 @@ export function normalizeBillingInfoResponse(payload = {}) {
     documentNumber: String(billingScalar(documentNumber) || '').replace(/\D/g, ''),
     taxpayerTypeId,
     taxpayerDescription,
+  }
+}
+
+function mergeBillingSources(...sources) {
+  const normalized = sources.filter(Boolean).map((source) => normalizeBillingInfoResponse(source))
+  const first = (field) => normalized.find((item) => item?.[field] !== null && item?.[field] !== undefined && item?.[field] !== '')?.[field] ?? ''
+  const primary = normalized[0] || normalizeBillingInfoResponse({})
+  return {
+    ...primary,
+    __normalizedBillingInfo: true,
+    legalName: first('legalName'),
+    fullName: first('fullName'),
+    documentType: first('documentType'),
+    documentNumber: first('documentNumber'),
+    taxpayerTypeId: first('taxpayerTypeId') || null,
+    taxpayerDescription: first('taxpayerDescription'),
   }
 }
 
@@ -452,7 +469,11 @@ export function fiscalDisplayData(buyer = {}) {
 }
 
 function normalizeOrder(order, fiscalInfo = {}, billingInfo = {}) {
-  const normalizedBilling = normalizeBillingInfoResponse(billingInfo)
+  const normalizedBilling = mergeBillingSources(
+    billingInfo,
+    order.billing_info,
+    order.buyer?.billing_info,
+  )
   const buyerName = [
     order.buyer?.first_name,
     order.buyer?.last_name,
@@ -518,7 +539,11 @@ function sumPaymentFees(payments) {
 }
 
 function buildOrderDetail(order, shipment, billingInfo, fiscalInfo = {}) {
-  const normalizedBilling = normalizeBillingInfoResponse(billingInfo || {})
+  const normalizedBilling = mergeBillingSources(
+    billingInfo,
+    order.billing_info,
+    order.buyer?.billing_info,
+  )
   const payments = Array.isArray(order.payments) ? order.payments : []
   const receiverAddress =
     shipment?.receiver_address
@@ -594,7 +619,9 @@ function buildOrderDetail(order, shipment, billingInfo, fiscalInfo = {}) {
       id: order.buyer?.id ? String(order.buyer.id) : null,
       nickname: order.buyer?.nickname || null,
       name: customerName || order.buyer?.nickname || 'Sin datos',
-      fiscalLegalName: normalizedBilling.legalName || selectFiscalLegalName({ billingInfo, documentType }),
+      fiscalLegalName: normalizedBilling.legalName
+        || (documentType.toUpperCase().includes('CUIT') ? normalizedBilling.fullName : '')
+        || selectFiscalLegalName({ billingInfo, documentType }),
       billingName: normalizedBilling.fullName || null,
       documentType,
       documentNumber: String(documentType.toUpperCase().includes('CUIT') ? onlyDigits(documentNumber) : documentNumber),
