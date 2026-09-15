@@ -55,6 +55,26 @@ export function matchReceiverVatCondition(conditions = [], taxCondition = '', in
   throw new Error('Para Factura B completá la condición fiscal del cliente (Consumidor final, Monotributo o Exento) antes de emitir.')
 }
 
+export function resolveBillingVatCondition(value, invoiceType = 'B') {
+  const source = conditionParts(value)
+  const className = String(invoiceType || 'B').toUpperCase()
+  const isResponsible = VAT_CONDITION_IDS.RESPONSABLE_INSCRIPTO.has(source.id)
+    || source.description.includes('RESPONSABLE INSCRIP')
+    || source.description.includes('IVA RESPONSABLE')
+  const isMonotributo = VAT_CONDITION_IDS.MONOTRIBUTO.has(source.id) || source.description.includes('MONOTRIB')
+  const isExento = VAT_CONDITION_IDS.EXENTO.has(source.id) || source.description.includes('EXENT')
+  const isConsumidorFinal = VAT_CONDITION_IDS.CONSUMIDOR_FINAL.has(source.id)
+    || source.description.includes('CONSUMIDOR')
+    || source.description.includes('FINAL')
+
+  if (className === 'A' && isResponsible) return { id: 1, description: 'Responsable Inscripto' }
+  if (className === 'A') throw new Error('Factura A requiere que Mercado Libre informe un receptor Responsable Inscripto.')
+  if (isMonotributo) return { id: 6, description: 'Monotributo' }
+  if (isExento) return { id: 4, description: 'Exento' }
+  if (isConsumidorFinal) return { id: 5, description: 'Consumidor Final' }
+  throw new Error('Mercado Libre no informó una condición IVA reconocible para la venta.')
+}
+
 export function sanitizeFiscalValue(value) {
   const parts = conditionParts(value)
   return {
