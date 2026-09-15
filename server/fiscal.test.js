@@ -121,6 +121,32 @@ assert.equal(normalizeBillingInfoResponse({
     ],
   },
 }).fullName, 'Juan Pérez')
+assert.equal(normalizeBillingInfoResponse({
+  billing_info: {
+    additional_info: {
+      items: [
+        { type: 'FIRST-NAME', value: 'Elena' },
+        { type: 'LAST_NAME', value: 'Alancay' },
+        { type: 'DOC-TYPE', value: 'DNI' },
+        { type: 'DOC_NUMBER', value: '39333135' },
+        { type: 'TAXPAYER_TYPE_ID', value: '5' },
+      ],
+    },
+  },
+}).fullName, 'Elena Alancay')
+assert.equal(normalizeBillingInfoResponse({
+  billing_info: {
+    additional_info: {
+      items: [
+        { type: 'FIRST-NAME', value: 'Elena' },
+        { type: 'LAST_NAME', value: 'Alancay' },
+        { type: 'DOC-TYPE', value: 'DNI' },
+        { type: 'DOC_NUMBER', value: '39333135' },
+        { type: 'TAXPAYER_TYPE_ID', value: '5' },
+      ],
+    },
+  },
+}).taxpayerTypeId, 5)
 
 assert.deepEqual(associatedVoucherFor({ cae: '123', voucher: { voucherType: 1, pointOfSale: 3, voucherNumber: 42 } }), {
   type: 1,
