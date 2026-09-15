@@ -314,6 +314,7 @@ function Invoices({ onNavigateToSales }) {
 
   const issueCreditNote = async (invoice) => {
     const invoiceId = String(invoice.id || invoice.orderId || '')
+    const confirmation = `EMITIR_NOTA_CREDITO_${invoiceId}`
     if (!invoiceId || !invoice.cae || !invoice.voucher?.voucherType) return
     const confirmed = window.confirm(
       `Se emitirá una Nota de crédito electrónica asociada a ${invoice.voucher.formattedNumber || 'la factura'} con ARCA. Esta operación fiscal no se puede deshacer.\n\n¿Querés continuar?`,
@@ -326,7 +327,7 @@ function Invoices({ onNavigateToSales }) {
       const payload = await api(`/arca/invoices/${encodeURIComponent(invoiceId)}/credit-note`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirmation: `EMITIR_NOTA_CREDITO_${invoiceId}` }),
+        body: JSON.stringify({ confirmation }),
       })
       setInvoices((current) => current.map((item) => String(item.id || item.orderId) === invoiceId
         ? { ...item, creditNote: payload.creditNote }

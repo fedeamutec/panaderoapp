@@ -541,8 +541,9 @@ export async function createSaleInvoice({
   }
 }
 
-export async function createCreditNote({ originalInvoice, confirmation }) {
-  if (confirmation !== `EMITIR_NOTA_CREDITO_${originalInvoice?.id || ''}`) {
+export async function createCreditNote({ originalInvoice, invoiceId, confirmation }) {
+  const confirmationId = String(invoiceId || originalInvoice?.id || originalInvoice?.orderId || '').trim()
+  if (confirmation !== `EMITIR_NOTA_CREDITO_${confirmationId}`) {
     throw new Error('Falta la confirmación de seguridad para emitir la Nota de crédito.')
   }
   const associated = associatedVoucherFor(originalInvoice)

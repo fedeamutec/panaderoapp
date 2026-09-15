@@ -841,6 +841,7 @@ app.post('/api/arca/invoices/:invoiceId/credit-note', async (req, res) => {
 
     const result = await createCreditNote({
       originalInvoice,
+      invoiceId,
       confirmation: req.body?.confirmation,
     })
     const creditNote = {
