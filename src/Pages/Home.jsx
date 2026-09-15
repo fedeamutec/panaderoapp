@@ -470,6 +470,7 @@ function Home() {
   const detailName = orderDetail?.buyer?.name || selectedSale?.customer
   const documentType = orderDetail?.buyer?.documentType || selectedSale?.documentType
   const documentNumber = orderDetail?.buyer?.documentNumber || selectedSale?.documentNumber
+  const billing = orderDetail?.billing || {}
   const detailItems = orderDetail?.items?.length ? orderDetail.items : selectedSale?.items || []
   const address = orderDetail?.address
   const primaryPayment = orderDetail?.payments?.[0]
@@ -602,15 +603,25 @@ function Home() {
               )}
 
               <div className="detail-block">
-                <div className="section-label">Cliente y facturación</div>
+                <div className="section-label">Datos del cliente</div>
                 <div className="data-grid">
-                  <div><small>Nombre real</small><strong>{textOrDash(detailName)}</strong></div>
-                  <div><small>{textOrDash(documentType)}</small><strong>{textOrDash(documentNumber)}</strong></div>
-                  <div><small>Teléfono</small><strong>{textOrDash(orderDetail?.buyer?.phone)}</strong></div>
-                  <div><small>Condición IVA</small><strong>{documentType === 'CUIT' ? 'Responsable inscripto' : documentType === 'DNI' ? 'Consumidor final' : 'Pendiente de consultar'}</strong></div>
+                  <div><small>Nombre en Mercado Libre</small><strong>{textOrDash(detailName)}</strong></div>
                   <div><small>Usuario ML</small><strong>{textOrDash(orderDetail?.buyer?.nickname)}</strong></div>
+                  <div><small>Teléfono</small><strong>{textOrDash(orderDetail?.buyer?.phone)}</strong></div>
                   <div><small>Cuenta vendedora</small><strong>{account.nickname || 'CR Argentina'}</strong></div>
                 </div>
+              </div>
+
+              <div className="detail-block">
+                <div className="section-label">Datos de facturación</div>
+                <div className="data-grid">
+                  <div><small>Razón social / Nombre</small><strong>{textOrDash(billing.legalName || billing.name)}</strong></div>
+                  <div><small>{textOrDash(billing.documentType || documentType)}</small><strong>{textOrDash(billing.documentNumber || documentNumber)}</strong></div>
+                  <div><small>Condición IVA</small><strong>{textOrDash(billing.taxCondition)}</strong></div>
+                </div>
+                {orderDetail?.billingInfoError && (
+                  <small className="financial-note">Mercado Libre: {orderDetail.billingInfoError}</small>
+                )}
               </div>
 
               <div className="detail-block product-detail-block">

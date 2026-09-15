@@ -18,7 +18,7 @@ import {
 import { generateCsr, getArcaStatus, readCsr, saveCertificate } from './arca/certificates.js'
 import { testArcaConnection } from './arca/wsaa.js'
 import { getPersonaByCuit, normalizeCuit } from './arca/padron.js'
-import { resolveBillingVatCondition, sanitizeFiscalValue } from './fiscalRules.js'
+import { matchReceiverVatCondition, resolveBillingVatCondition, sanitizeFiscalValue } from './fiscalRules.js'
 import {
   createCreditNote,
   createSaleInvoice,

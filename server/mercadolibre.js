@@ -178,7 +178,17 @@ function billingField(additionalInfo, names) {
   return entry?.value ?? entry?.description ?? entry?.nameValue ?? ''
 }
 
+function billingScalar(value) {
+  if (value === null || value === undefined) return ''
+  if (typeof value !== 'object') return value
+  return value.value ?? value.id ?? value.code ?? value.description ?? value.name ?? ''
+}
+
 export function normalizeBillingInfoResponse(payload = {}) {
+  // getBillingInfoForOrder already returns this normalized shape. Keeping this
+  // function idempotent prevents a second pass from discarding fiscal fields.
+  if (payload?.__normalizedBillingInfo === true) return payload
+
   const billing = payload?.billing_info || payload || {}
   const additionalInfo = billing?.additional_info || payload?.additional_info || []
   const identification = billing?.identification || payload?.identification || {}
@@ -187,7 +197,7 @@ export function normalizeBillingInfoResponse(payload = {}) {
     || identification.number
     || payload.doc_number
     || payload.document_number
-    || billingField(additionalInfo, ['doc_number', 'document_number', 'identification_number', 'cuit', 'tax_id'])
+    || billingField(additionalInfo, ['doc_number', 'document_number', 'identification', 'identification_number', 'cuit', 'tax_id'])
   const documentType = billing.doc_type
     || billing.document_type
     || identification.type
@@ -214,18 +224,28 @@ export function normalizeBillingInfoResponse(payload = {}) {
   const taxpayerDescription = typeof taxpayerType === 'object'
     ? taxpayerType.description || taxpayerType.name || taxpayerType.label || ''
     : String(taxpayerType || '').trim()
-  const firstName = billing.first_name || billing.firstName || payload.first_name || ''
-  const lastName = billing.last_name || billing.lastName || payload.last_name || ''
-  const fullName = billing.name || [firstName, lastName].filter(Boolean).join(' ') || payload.name || ''
+  const firstName = billing.first_name
+    || billing.firstName
+    || payload.first_name
+    || billingField(additionalInfo, ['first_name', 'firstname'])
+  const lastName = billing.last_name
+    || billing.lastName
+    || payload.last_name
+    || billingField(additionalInfo, ['last_name', 'lastname'])
+  const fullName = billing.name
+    || [billingScalar(firstName), billingScalar(lastName)].filter(Boolean).join(' ')
+    || payload.name
+    || billingField(additionalInfo, ['full_name', 'fullname', 'name'])
 
   return {
+    __normalizedBillingInfo: true,
     raw: payload,
     billing,
     additionalInfo,
-    legalName: String(legalName || '').trim(),
-    fullName: String(fullName || '').trim(),
-    documentType: String(documentType || '').trim(),
-    documentNumber: String(documentNumber || '').replace(/\D/g, ''),
+    legalName: String(billingScalar(legalName) || '').trim(),
+    fullName: String(billingScalar(fullName) || '').trim(),
+    documentType: String(billingScalar(documentType) || '').trim(),
+    documentNumber: String(billingScalar(documentNumber) || '').replace(/\D/g, ''),
     taxpayerTypeId,
     taxpayerDescription,
   }
@@ -509,9 +529,7 @@ function buildOrderDetail(order, shipment, billingInfo, fiscalInfo = {}) {
     normalizedBilling.additionalInfo
     || null
 
-  const buyerName = [
-    normalizedBilling.billing?.name,
-    normalizedBilling.billing?.legal_name,
+  const customerName = [
     order.buyer?.first_name,
     order.buyer?.last_name,
   ].filter(Boolean).join(' ').trim()
@@ -575,7 +593,7 @@ function buildOrderDetail(order, shipment, billingInfo, fiscalInfo = {}) {
     buyer: {
       id: order.buyer?.id ? String(order.buyer.id) : null,
       nickname: order.buyer?.nickname || null,
-      name: buyerName || order.buyer?.nickname || 'Sin datos',
+      name: customerName || order.buyer?.nickname || 'Sin datos',
       fiscalLegalName: normalizedBilling.legalName || selectFiscalLegalName({ billingInfo, documentType }),
       billingName: normalizedBilling.fullName || null,
       documentType,
@@ -584,6 +602,16 @@ function buildOrderDetail(order, shipment, billingInfo, fiscalInfo = {}) {
       taxConditionId,
       phone,
       email: order.buyer?.email || null,
+    },
+
+    // Datos fiscales separados de la identidad pública del comprador.
+    billing: {
+      legalName: normalizedBilling.legalName || null,
+      name: normalizedBilling.fullName || null,
+      documentType,
+      documentNumber: String(documentType.toUpperCase().includes('CUIT') ? onlyDigits(documentNumber) : documentNumber),
+      taxCondition,
+      taxConditionId,
     },
 
     address: receiverAddress
