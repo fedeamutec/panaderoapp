@@ -18,6 +18,7 @@ import {
 import { generateCsr, getArcaStatus, readCsr, saveCertificate } from './arca/certificates.js'
 import { testArcaConnection } from './arca/wsaa.js'
 import { getPersonaByCuit, normalizeCuit } from './arca/padron.js'
+import { matchReceiverVatCondition, sanitizeFiscalValue } from './fiscalRules.js'
 import {
   createCreditNote,
   createSaleInvoice,
@@ -64,43 +65,11 @@ function onlyDigits(value) {
   return String(value || '').replace(/\D/g, '')
 }
 
-function normalizeText(value) {
-  return String(value || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .trim()
-    .toUpperCase()
-}
-
 function documentIdentity(client = {}) {
   const digits = onlyDigits(client.cuit || client.documentNumber)
   if (digits.length === 11) return { documentType: 'CUIT', documentNumber: digits }
   if (digits.length >= 7 && digits.length <= 8) return { documentType: 'DNI', documentNumber: digits }
   return { documentType: '', documentNumber: digits }
-}
-
-function matchReceiverVatCondition(conditions = [], taxCondition = '', invoiceType = 'B') {
-  const normalized = normalizeText(taxCondition)
-  const className = String(invoiceType || 'B').toUpperCase()
-
-  if (className === 'A') {
-    if (!normalized.includes('RESPONSABLE') || !normalized.includes('INSCRIP')) {
-      throw new Error('Factura A requiere un receptor Responsable Inscripto. Revisá la condición fiscal del cliente.')
-    }
-    return conditions.find((item) => normalizeText(item.description).includes('RESPONSABLE INSCRIP'))
-  }
-
-  if (normalized.includes('MONOTRIB')) {
-    return conditions.find((item) => normalizeText(item.description).includes('MONOTRIB'))
-  }
-  if (normalized.includes('EXENT')) {
-    return conditions.find((item) => normalizeText(item.description).includes('EXENT'))
-  }
-  if (normalized.includes('CONSUMIDOR') || normalized.includes('FINAL')) {
-    return conditions.find((item) => normalizeText(item.description).includes('CONSUMIDOR FINAL'))
-  }
-
-  throw new Error('Para Factura B completá la condición fiscal del cliente (Consumidor final, Monotributo o Exento) antes de emitir.')
 }
 
 function commercialInvoiceItems(items = []) {
@@ -145,9 +114,20 @@ async function resolveSaleFiscalSnapshot({ detail = {}, invoiceType, requestId }
   const fiscalReceiver = await resolveFiscalReceiverName({ buyer, requestId })
   const vatConditionsResponse = await getReceiverVatConditions({ voucherClass: invoiceType })
   const taxCondition = buyer.taxCondition || (identity.documentType === 'DNI' ? 'Consumidor Final' : '')
+  const taxConditionInput = buyer.taxConditionId
+    ? { id: buyer.taxConditionId, description: taxCondition }
+    : taxCondition
+  console.info('[fiscal] condición receptor sanitizada', {
+    requestId: String(requestId || ''),
+    invoiceType,
+    documentType: identity.documentType,
+    documentNumberSuffix: identity.documentNumber.slice(-4),
+    mercadoLibre: sanitizeFiscalValue(taxConditionInput),
+    arcaConditions: (vatConditionsResponse.conditions || []).map(sanitizeFiscalValue),
+  })
   const receiverVatCondition = matchReceiverVatCondition(
     vatConditionsResponse.conditions || [],
-    taxCondition,
+    taxConditionInput,
     invoiceType,
   )
   if (!receiverVatCondition?.id || !receiverVatCondition.description) {
@@ -624,6 +604,14 @@ app.post('/api/arca/commercial-invoice', async (req, res) => {
     }
 
     const vatConditionsResponse = await getReceiverVatConditions({ voucherClass: invoiceType })
+    console.info('[fiscal] condición comercial sanitizada', {
+      requestId,
+      invoiceType,
+      documentType: identity.documentType,
+      documentNumberSuffix: identity.documentNumber.slice(-4),
+      mercadoLibre: sanitizeFiscalValue(client.taxCondition),
+      arcaConditions: (vatConditionsResponse.conditions || []).map(sanitizeFiscalValue),
+    })
     const vatCondition = matchReceiverVatCondition(
       vatConditionsResponse.conditions || [],
       client.taxCondition,

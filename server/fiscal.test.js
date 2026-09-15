@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { fiscalDisplayData, selectFiscalLegalName } from './mercadolibre.js'
+import { matchReceiverVatCondition, sanitizeFiscalValue } from './fiscalRules.js'
 import {
   associatedVoucherFor,
   buildCreditNoteDetailXml,
@@ -35,6 +36,21 @@ assert.deepEqual(fiscalDisplayData({ documentType: 'DNI', name: 'Juan Perez' }),
   label: 'Nombre',
   value: 'Juan Perez',
   displayName: 'Juan Perez',
+})
+
+const arcaConditions = [
+  { id: 1, description: 'IVA Responsable Inscripto' },
+  { id: 4, description: 'IVA Sujeto Exento' },
+  { id: 5, description: 'Consumidor Final' },
+  { id: 6, description: 'Responsable Monotributo' },
+]
+assert.equal(matchReceiverVatCondition(arcaConditions, { id: 1, description: 'Responsable Inscripto' }, 'A').id, 1)
+assert.equal(matchReceiverVatCondition(arcaConditions, 'IVA Responsable Inscripto', 'A').id, 1)
+assert.equal(matchReceiverVatCondition(arcaConditions, { id: 5, description: 'Consumidor Final' }, 'B').id, 5)
+assert.throws(() => matchReceiverVatCondition(arcaConditions, '', 'A'), /Responsable Inscripto/)
+assert.deepEqual(sanitizeFiscalValue({ id: 1, description: 'IVA Responsable Inscripto' }), {
+  id: 1,
+  description: 'IVA RESPONSABLE INSCRIPTO',
 })
 
 assert.deepEqual(associatedVoucherFor({ cae: '123', voucher: { voucherType: 1, pointOfSale: 3, voucherNumber: 42 } }), {
