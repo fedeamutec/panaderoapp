@@ -296,6 +296,17 @@ export function selectFiscalLegalName({ billingInfo = {}, documentType = '' } = 
   return ''
 }
 
+export function fiscalDisplayData(buyer = {}) {
+  const documentType = String(buyer.documentType || '').toUpperCase()
+  const fiscalLegalName = String(buyer.fiscalLegalName || '').trim()
+  if (documentType.includes('CUIT')) {
+    if (!fiscalLegalName) throw new Error('Falta la razón social fiscal del CUIT.')
+    return { label: 'Razón social', value: fiscalLegalName, displayName: fiscalLegalName }
+  }
+  const name = String(buyer.name || '').trim()
+  return { label: 'Nombre', value: name, displayName: name }
+}
+
 function normalizeOrder(order, fiscalInfo = {}) {
   const buyerName = [
     order.buyer?.first_name,
@@ -383,6 +394,16 @@ function buildOrderDetail(order, shipment, billingInfo, fiscalInfo = {}) {
     || billingInfo?.doc_number
     || 'Sin datos'
 
+  const billing = billingInfo?.billing_info || billingInfo || {}
+  const taxConditionValue = billing.tax_condition
+    || billing.taxCondition
+    || billing.taxpayer_type
+    || billing.taxpayerType
+    || additionalInfoValue(billingAddress, ['tax_condition', 'taxcondition', 'taxpayer_type', 'taxpayertype', 'condicion_fiscal', 'condicionfiscal'])
+  const taxCondition = typeof taxConditionValue === 'object'
+    ? taxConditionValue.description || taxConditionValue.name || taxConditionValue.value || ''
+    : String(taxConditionValue || '').trim()
+
   const phone =
     receiverAddress?.receiver_phone
     || receiverAddress?.phone
@@ -436,6 +457,7 @@ function buildOrderDetail(order, shipment, billingInfo, fiscalInfo = {}) {
       fiscalLegalName: selectFiscalLegalName({ billingInfo, documentType }),
       documentType,
       documentNumber: String(documentType.toUpperCase().includes('CUIT') ? onlyDigits(documentNumber) : documentNumber),
+      taxCondition,
       phone,
       email: order.buyer?.email || null,
     },

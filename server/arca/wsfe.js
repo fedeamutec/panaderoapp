@@ -541,6 +541,36 @@ export async function createSaleInvoice({
   }
 }
 
+export function originalInvoiceFiscalData(originalInvoice = {}) {
+  const voucher = originalInvoice.voucher || {}
+  const storedCondition = originalInvoice.receiverVatCondition
+  const conditionId = Number(storedCondition ? storedCondition.id : voucher.recipientVatConditionId)
+  const conditionDescription = String(storedCondition ? storedCondition.description : originalInvoice.buyer?.taxCondition || '').trim()
+  if (!Number.isInteger(conditionId) || conditionId <= 0 || !conditionDescription) {
+    throw new Error('La factura original no tiene una condición IVA del receptor válida; no se puede emitir la Nota de crédito.')
+  }
+
+  const documentType = Number(voucher.documentType || originalInvoice.buyer?.documentTypeCode)
+  const documentNumber = Number(String(voucher.documentNumber || originalInvoice.buyer?.documentNumber || '').replace(/\D/g, ''))
+  if (!Number.isInteger(documentType) || documentType <= 0 || !Number.isInteger(documentNumber) || documentNumber < 0) {
+    throw new Error('La factura original no tiene DocTipo y DocNro válidos; no se puede emitir la Nota de crédito.')
+  }
+
+  return {
+    conditionId,
+    conditionDescription,
+    documentType,
+    documentNumber,
+  }
+}
+
+export function buildCreditNoteDetailXml({ voucherNumber, voucherDate, total, netAmount, vatAmount, vatId, currency, exchangeRate, fiscalData, associated }) {
+  return `<Concepto>1</Concepto><DocTipo>${fiscalData.documentType}</DocTipo><DocNro>${fiscalData.documentNumber}</DocNro><CbteDesde>${voucherNumber}</CbteDesde><CbteHasta>${voucherNumber}</CbteHasta><CbteFch>${voucherDate}</CbteFch>
+<ImpTotal>${total.toFixed(2)}</ImpTotal><ImpTotConc>0.00</ImpTotConc><ImpNeto>${netAmount.toFixed(2)}</ImpNeto><ImpOpEx>0.00</ImpOpEx><ImpTrib>0.00</ImpTrib><ImpIVA>${vatAmount.toFixed(2)}</ImpIVA><MonId>${xmlEscape(currency)}</MonId><MonCotiz>${exchangeRate.toFixed(6)}</MonCotiz><CondicionIVAReceptorId>${fiscalData.conditionId}</CondicionIVAReceptorId>
+<CbtesAsoc><CbteAsoc><Tipo>${associated.type}</Tipo><PtoVta>${associated.pointOfSale}</PtoVta><Nro>${associated.number}</Nro></CbteAsoc></CbtesAsoc>
+${vatId ? `<Iva><AlicIva><Id>${vatId}</Id><BaseImp>${netAmount.toFixed(2)}</BaseImp><Importe>${vatAmount.toFixed(2)}</Importe></AlicIva></Iva>` : ''}`
+}
+
 export async function createCreditNote({ originalInvoice, invoiceId, confirmation }) {
   const confirmationId = String(invoiceId || originalInvoice?.id || originalInvoice?.orderId || '').trim()
   if (confirmation !== `EMITIR_NOTA_CREDITO_${confirmationId}`) {
@@ -549,25 +579,31 @@ export async function createCreditNote({ originalInvoice, invoiceId, confirmatio
   const associated = associatedVoucherFor(originalInvoice)
   const voucherType = creditNoteTypeFor(associated.type)
   const originalVoucher = originalInvoice.voucher
+  const fiscalData = originalInvoiceFiscalData(originalInvoice)
   const pointOfSale = Number(originalVoucher.pointOfSale)
   const total = normalizeMoney(originalVoucher.amount, 'El importe de la Nota de crédito')
   const netAmount = normalizeMoney(originalVoucher.netAmount || total, 'El neto de la Nota de crédito')
   const vatAmount = Number(originalVoucher.vatAmount || 0)
   const vatRate = Number(originalVoucher.vatRate || 0)
   const vatId = vatRate ? calculateVatBreakdown(total, vatRate).vatId : null
-  const documentType = Number(originalVoucher.documentType || originalInvoice.buyer?.documentTypeCode || 99)
-  const documentNumber = Number(String(originalVoucher.documentNumber || originalInvoice.buyer?.documentNumber || '').replace(/\D/g, '')) || 0
-  const conditionId = Number(originalVoucher.recipientVatConditionId || originalInvoice.receiverVatCondition?.id || 5)
   const lastVoucher = await getLastAuthorizedVoucher({ pointOfSale, voucherType })
   const voucherNumber = lastVoucher.nextVoucherNumber
   const voucherDate = formatArcaDate()
+  const exchangeRate = Number(originalVoucher.exchangeRate || 1)
+  const detailXml = buildCreditNoteDetailXml({
+    voucherNumber,
+    voucherDate,
+    total,
+    netAmount,
+    vatAmount,
+    vatId,
+    currency: originalVoucher.currency || 'PES',
+    exchangeRate,
+    fiscalData,
+    associated,
+  })
   const { xml, events } = await callWsfe('FECAESolicitar', (ticket) => `${buildAuth(ticket)}
-<FeCAEReq><FeCabReq><CantReg>1</CantReg><PtoVta>${pointOfSale}</PtoVta><CbteTipo>${voucherType}</CbteTipo></FeCabReq><FeDetReq><FECAEDetRequest>
-<Concepto>1</Concepto><DocTipo>${documentType}</DocTipo><DocNro>${documentNumber}</DocNro><CbteDesde>${voucherNumber}</CbteDesde><CbteHasta>${voucherNumber}</CbteHasta><CbteFch>${voucherDate}</CbteFch>
-<ImpTotal>${total.toFixed(2)}</ImpTotal><ImpTotConc>0.00</ImpTotConc><ImpNeto>${netAmount.toFixed(2)}</ImpNeto><ImpOpEx>0.00</ImpOpEx><ImpTrib>0.00</ImpTrib><ImpIVA>${vatAmount.toFixed(2)}</ImpIVA><MonId>${xmlEscape(originalVoucher.currency || 'PES')}</MonId><MonCotiz>${Number(originalVoucher.exchangeRate || 1).toFixed(6)}</MonCotiz><CondicionIVAReceptorId>${conditionId}</CondicionIVAReceptorId>
-<CbtesAsoc><CbteAsoc><Tipo>${associated.type}</Tipo><PtoVta>${associated.pointOfSale}</PtoVta><Nro>${associated.number}</Nro></CbteAsoc></CbtesAsoc>
-${vatId ? `<Iva><AlicIva><Id>${vatId}</Id><BaseImp>${netAmount.toFixed(2)}</BaseImp><Importe>${vatAmount.toFixed(2)}</Importe></AlicIva></Iva>` : ''}
-</FECAEDetRequest></FeDetReq></FeCAEReq>`)
+<FeCAEReq><FeCabReq><CantReg>1</CantReg><PtoVta>${pointOfSale}</PtoVta><CbteTipo>${voucherType}</CbteTipo></FeCabReq><FeDetReq><FECAEDetRequest>${detailXml}</FECAEDetRequest></FeDetReq></FeCAEReq>`)
   const headerBlock = extractTag(xml, 'FeCabResp') || ''
   const detailBlock = extractBlocks(xml, 'FECAEDetResponse')[0] || ''
   const observations = extractMessages(detailBlock, 'Observaciones', 'Obs')
@@ -579,7 +615,7 @@ ${vatId ? `<Iva><AlicIva><Id>${vatId}</Id><BaseImp>${netAmount.toFixed(2)}</Base
   }
   return {
     ok: true, environment: ARCA_ENV, authorized: true,
-    voucher: { pointOfSale, voucherType, voucherTypeDescription: voucherDescription(voucherType), voucherNumber, formattedNumber: `${String(pointOfSale).padStart(4, '0')}-${String(voucherNumber).padStart(8, '0')}`, date: voucherDate, amount: total, netAmount, vatAmount, vatRate, currency: originalVoucher.currency || 'PES', documentType, documentNumber, recipientVatConditionId: conditionId },
+    voucher: { pointOfSale, voucherType, voucherTypeDescription: voucherDescription(voucherType), voucherNumber, formattedNumber: `${String(pointOfSale).padStart(4, '0')}-${String(voucherNumber).padStart(8, '0')}`, date: voucherDate, amount: total, netAmount, vatAmount, vatRate, currency: originalVoucher.currency || 'PES', documentType: fiscalData.documentType, documentNumber: fiscalData.documentNumber, recipientVatConditionId: fiscalData.conditionId },
     cae, caeExpirationDate: extractTag(detailBlock, 'CAEFchVto'), processedAt: extractTag(headerBlock, 'FchProceso') || null, result, observations, events,
   }
 }

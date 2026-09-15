@@ -372,6 +372,13 @@ function Home() {
     setInvoicePreparing(true)
     setInvoiceError('')
     try {
+      const fiscalPayload = await api(
+        `/mercadolibre/order/${encodeURIComponent(orderId)}?invoiceType=${resolvedType}`,
+      )
+      const fiscalSnapshot = fiscalPayload.fiscalSnapshot
+      if (!fiscalSnapshot?.receiverVatCondition?.id || !fiscalSnapshot.receiverVatCondition.description) {
+        throw new Error('No se pudo resolver una condición IVA fiscal válida.')
+      }
       const voucherType = resolvedType === 'A' ? 1 : 6
       const sequence = await api(
         `/arca/last-voucher?pointOfSale=${ARCA_POINT_OF_SALE}&voucherType=${voucherType}`,
@@ -380,20 +387,34 @@ function Home() {
       setInvoiceModal({
         orderId,
         amount,
-        selectedType,
+        selectedType: resolvedType,
         resolvedType,
-        documentLabel,
-        customer:
-          orderDetail?.buyer?.name ||
-          selectedSale.customer ||
-          'Cliente de Mercado Libre',
+        documentLabel: `${fiscalSnapshot.documentType} ${fiscalSnapshot.documentNumber}`,
+        customer: fiscalSnapshot.displayName,
+        customerLabel: fiscalSnapshot.documentType === 'CUIT' ? 'Razón social' : 'Nombre',
+        taxCondition: fiscalSnapshot.receiverVatCondition.description,
+        fiscalSnapshot,
         vatRate: selectedVatRate,
         pointOfSale: ARCA_POINT_OF_SALE,
         nextVoucherNumber: sequence.nextVoucherNumber,
         nextFormattedNumber: `${String(ARCA_POINT_OF_SALE).padStart(4, '0')}-${String(sequence.nextVoucherNumber).padStart(8, '0')}`,
       })
     } catch (error) {
-      setInvoiceError(`No se pudo consultar la próxima numeración: ${error.message}`)
+      setInvoiceModal({
+        orderId,
+        amount,
+        resolvedType,
+        documentLabel,
+        customer: '',
+        customerLabel: resolvedType === 'A' ? 'Razón social' : 'Nombre',
+        taxCondition: '',
+        fiscalSnapshot: null,
+        fiscalError: `No se pudo resolver los datos fiscales: ${error.message}`,
+        vatRate: selectedVatRate,
+        pointOfSale: ARCA_POINT_OF_SALE,
+        nextVoucherNumber: null,
+        nextFormattedNumber: 'Pendiente',
+      })
     } finally {
       setInvoicePreparing(false)
     }
@@ -404,9 +425,9 @@ function Home() {
   }
 
   const confirmInvoiceSale = async () => {
-    if (!invoiceModal || invoiceLoading) return
+    if (!invoiceModal || invoiceLoading || !invoiceModal.fiscalSnapshot) return
 
-    const { orderId, selectedType, vatRate } = invoiceModal
+    const { orderId, selectedType, vatRate, fiscalSnapshot } = invoiceModal
 
     setInvoiceLoading(true)
     setInvoiceError('')
@@ -420,6 +441,7 @@ function Home() {
           orderId,
           invoiceType: selectedType,
           vatRate,
+          fiscalSnapshot,
           confirmation: `EMITIR_VENTA_${orderId}`,
         }),
       })
@@ -838,7 +860,7 @@ function Home() {
 
             <div className="invoice-modal-summary">
               <div>
-                <small>Cliente</small>
+                  <small>{invoiceModal.customerLabel || 'Cliente'}</small>
                 <strong>{invoiceModal.customer}</strong>
               </div>
               <div>
@@ -850,8 +872,8 @@ function Home() {
                 <strong>#{invoiceModal.orderId}</strong>
               </div>
               <div>
-                <small>Alícuota de IVA</small>
-                <strong>IVA {String(invoiceModal.vatRate).replace('.', ',')}%</strong>
+                  <small>Condición IVA fiscal</small>
+                  <strong>{invoiceModal.taxCondition || 'Pendiente de resolver'}</strong>
               </div>
             </div>
 
@@ -879,8 +901,8 @@ function Home() {
               </span>
             </div>
 
-            {invoiceError && (
-              <div className="invoice-modal-error">{invoiceError}</div>
+            {(invoiceError || invoiceModal.fiscalError) && (
+              <div className="invoice-modal-error">{invoiceError || invoiceModal.fiscalError}</div>
             )}
 
             <div className="invoice-modal-actions">
@@ -896,7 +918,7 @@ function Home() {
                 type="button"
                 className="primary-button invoice-modal-confirm"
                 onClick={confirmInvoiceSale}
-                disabled={invoiceLoading}
+                disabled={invoiceLoading || !invoiceModal.fiscalSnapshot}
               >
                 {invoiceLoading ? 'Solicitando CAE…' : 'Emitir factura'}
               </button>
