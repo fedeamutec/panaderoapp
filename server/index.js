@@ -11,6 +11,7 @@ import {
   getOrders,
   getMercadoLibreCustomerReport,
   getStatus,
+  fiscalDisplayData,
   syncOrders,
   uploadFiscalDocument,
 } from './mercadolibre.js'
@@ -131,6 +132,57 @@ async function resolveFiscalReceiverName({ buyer = {}, requestId }) {
       throw new Error(`No se pudo obtener la razón social fiscal del CUIT ${identity.documentNumber}: ${error.message}. Para continuar sin ella, confirmá explícitamente la emisión.`, { cause: error })
     }
     return { name: '', source: 'explicit-fallback', cuit: identity.documentNumber, warning: error.message }
+  }
+}
+
+async function resolveSaleFiscalSnapshot({ detail = {}, invoiceType, requestId }) {
+  const buyer = detail.buyer || {}
+  const identity = documentIdentity(buyer)
+  if (!identity.documentType || !identity.documentNumber) {
+    throw new Error('La venta no tiene un documento fiscal válido para emitir.')
+  }
+
+  const fiscalReceiver = await resolveFiscalReceiverName({ buyer, requestId })
+  const vatConditionsResponse = await getReceiverVatConditions({ voucherClass: invoiceType })
+  const taxCondition = buyer.taxCondition || (identity.documentType === 'DNI' ? 'Consumidor Final' : '')
+  const receiverVatCondition = matchReceiverVatCondition(
+    vatConditionsResponse.conditions || [],
+    taxCondition,
+    invoiceType,
+  )
+  if (!receiverVatCondition?.id || !receiverVatCondition.description) {
+    throw new Error('No se pudo resolver una condición IVA fiscal válida para la venta.')
+  }
+
+  return {
+    invoiceType,
+    documentType: identity.documentType,
+    documentNumber: identity.documentNumber,
+    fiscalLegalName: identity.documentType === 'CUIT' ? fiscalReceiver.name : '',
+    ...fiscalDisplayData({
+      documentType: identity.documentType,
+      fiscalLegalName: fiscalReceiver.name,
+      name: buyer.name,
+    }),
+    receiverVatCondition: {
+      id: Number(receiverVatCondition.id),
+      description: receiverVatCondition.description,
+    },
+    fiscalReceiver,
+  }
+}
+
+function validateSaleFiscalSnapshot(snapshot, detail = {}) {
+  const identity = documentIdentity(detail.buyer || {})
+  if (String(snapshot.documentType || '').toUpperCase() !== identity.documentType
+    || String(snapshot.documentNumber || '').replace(/\D/g, '') !== identity.documentNumber) {
+    throw new Error('Los datos fiscales confirmados no coinciden con el documento de la venta.')
+  }
+  if (identity.documentType === 'CUIT' && !String(snapshot.fiscalLegalName || '').trim()) {
+    throw new Error('La razón social fiscal del CUIT es obligatoria antes de emitir.')
+  }
+  if (!Number.isInteger(Number(snapshot.receiverVatCondition?.id)) || !String(snapshot.receiverVatCondition?.description || '').trim()) {
+    throw new Error('La condición IVA fiscal confirmada no es válida.')
   }
 }
 
@@ -700,20 +752,30 @@ app.post('/api/arca/sale-invoice', async (req, res) => {
     const detail = orderPayload?.detail || orderPayload
     if (!detail) throw new Error('No se pudo obtener el detalle de la venta.')
 
+    const fiscalSnapshot = req.body?.fiscalSnapshot
+    if (!fiscalSnapshot?.receiverVatCondition?.id || !fiscalSnapshot.receiverVatCondition.description) {
+      throw new Error('Falta la condición IVA fiscal confirmada antes de emitir.')
+    }
+    if (String(fiscalSnapshot.invoiceType || '').toUpperCase() !== String(req.body?.invoiceType || '').toUpperCase()) {
+      throw new Error('Los datos fiscales confirmados no coinciden con el tipo de factura.')
+    }
+    validateSaleFiscalSnapshot(fiscalSnapshot, detail)
+
     const amount = Number(detail.amounts?.total || detail.total || 0)
     if (!Number.isFinite(amount) || amount <= 0) {
       throw new Error('La venta no tiene un importe válido para facturar.')
     }
 
     const buyer = detail.buyer || {}
-    const fiscalReceiver = await resolveFiscalReceiverName({ buyer, requestId: orderId })
+    const fiscalReceiver = fiscalSnapshot.fiscalReceiver || null
     const result = await createSaleInvoice({
       pointOfSale: ARCA_POINT_OF_SALE,
       amount,
       requestedType: req.body?.invoiceType || 'automatic',
       vatRate: req.body?.vatRate,
-      documentType: buyer.documentType,
-      documentNumber: buyer.documentNumber,
+      documentType: fiscalSnapshot.documentType,
+      documentNumber: fiscalSnapshot.documentNumber,
+      recipientVatConditionId: fiscalSnapshot.receiverVatCondition.id,
       confirmation,
     })
 
@@ -721,17 +783,18 @@ app.post('/api/arca/sale-invoice', async (req, res) => {
       id: `sale-${orderId}`,
       orderId,
       buyer: {
-        name: buyer.name || null,
-        fiscalLegalName: fiscalReceiver.name || null,
-        documentType: buyer.documentType || null,
-        documentNumber: buyer.documentNumber || null,
+        name: fiscalSnapshot.displayName || buyer.name || null,
+        fiscalLegalName: fiscalSnapshot.fiscalLegalName || null,
+        documentType: fiscalSnapshot.documentType || null,
+        documentNumber: fiscalSnapshot.documentNumber || null,
+        taxCondition: fiscalSnapshot.receiverVatCondition.description,
       },
       saleSnapshot: {
         items: Array.isArray(detail.items) ? detail.items : [],
         address: detail.address || null,
         amounts: detail.amounts || { total: amount },
         accountNickname: detail.accountNickname || null,
-        receiverFiscalName: fiscalReceiver.name || null,
+        receiverFiscalName: fiscalSnapshot.fiscalLegalName || fiscalSnapshot.displayName || null,
       },
       createdAt: new Date().toISOString(),
       environment: result.environment,
@@ -740,6 +803,7 @@ app.post('/api/arca/sale-invoice', async (req, res) => {
       caeExpirationDate: result.caeExpirationDate,
       result: result.result,
       observations: result.observations || [],
+      receiverVatCondition: fiscalSnapshot.receiverVatCondition,
       fiscalReceiver,
     }
 
@@ -1003,7 +1067,20 @@ app.get('/api/mercadolibre/orders', async (_req, res) => {
 })
 
 app.get('/api/mercadolibre/order/:id', async (req, res) => {
-  try { res.json(await getOrderDetail(req.params.id)) } catch (error) { res.status(500).json({ error: error.message }) }
+  try {
+    const payload = await getOrderDetail(req.params.id)
+    const invoiceType = String(req.query.invoiceType || '').toUpperCase()
+    if (!['A', 'B'].includes(invoiceType)) return res.json(payload)
+    const fiscalSnapshot = await resolveSaleFiscalSnapshot({
+      detail: payload.detail,
+      invoiceType,
+      requestId: String(req.params.id),
+    })
+    res.json({ ...payload, fiscalSnapshot })
+  } catch (error) {
+    console.error('Mercado Libre fiscal preview error:', error)
+    res.status(400).json({ ok: false, error: error.message })
+  }
 })
 
 app.post('/api/mercadolibre/disconnect', async (_req, res) => {
