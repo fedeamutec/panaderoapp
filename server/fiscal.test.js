@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { fiscalDisplayData, selectFiscalLegalName } from './mercadolibre.js'
+import { fiscalDisplayData, normalizeBillingInfoResponse, selectFiscalLegalName } from './mercadolibre.js'
 import { matchReceiverVatCondition, sanitizeFiscalValue } from './fiscalRules.js'
 import {
   associatedVoucherFor,
@@ -27,6 +27,32 @@ assert.equal(
   'ACME SA',
 )
 assert.equal(selectFiscalLegalName({ documentType: 'DNI', billingInfo: { business_name: 'No usar' } }), '')
+assert.deepEqual(normalizeBillingInfoResponse({
+  billing_info: {
+    business_name: 'ACME SRL',
+    identification: { type: 'CUIT', number: '30-12345678-9' },
+    additional_info: [{ type: 'taxpayer_type', value: { id: 1, description: 'IVA Responsable Inscripto' } }],
+  },
+}), {
+  raw: {
+    billing_info: {
+      business_name: 'ACME SRL',
+      identification: { type: 'CUIT', number: '30-12345678-9' },
+      additional_info: [{ type: 'taxpayer_type', value: { id: 1, description: 'IVA Responsable Inscripto' } }],
+    },
+  },
+  billing: {
+    business_name: 'ACME SRL',
+    identification: { type: 'CUIT', number: '30-12345678-9' },
+    additional_info: [{ type: 'taxpayer_type', value: { id: 1, description: 'IVA Responsable Inscripto' } }],
+  },
+  additionalInfo: [{ type: 'taxpayer_type', value: { id: 1, description: 'IVA Responsable Inscripto' } }],
+  legalName: 'ACME SRL',
+  documentType: 'CUIT',
+  documentNumber: '30123456789',
+  taxpayerTypeId: 1,
+  taxpayerDescription: 'IVA Responsable Inscripto',
+})
 assert.deepEqual(fiscalDisplayData({ documentType: 'CUIT', fiscalLegalName: 'ACME SRL', name: 'nickname' }), {
   label: 'Razón social',
   value: 'ACME SRL',

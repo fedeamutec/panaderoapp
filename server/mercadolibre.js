@@ -162,6 +162,111 @@ async function apiFetch(pathname, suppliedToken) {
   return payload
 }
 
+function billingInfoAdditionalEntries(value) {
+  if (Array.isArray(value)) return value
+  if (!value || typeof value !== 'object') return []
+  return Object.entries(value).map(([name, entry]) => ({
+    name,
+    type: name,
+    value: entry,
+  }))
+}
+
+function billingField(additionalInfo, names) {
+  const normalizedNames = names.map((name) => String(name).toLowerCase())
+  const entry = billingInfoAdditionalEntries(additionalInfo).find((item) => normalizedNames.includes(String(item?.type || item?.name || '').toLowerCase()))
+  return entry?.value ?? entry?.description ?? entry?.nameValue ?? ''
+}
+
+export function normalizeBillingInfoResponse(payload = {}) {
+  const billing = payload?.billing_info || payload || {}
+  const additionalInfo = billing?.additional_info || payload?.additional_info || []
+  const identification = billing?.identification || payload?.identification || {}
+  const documentNumber = billing.doc_number
+    || billing.document_number
+    || identification.number
+    || payload.doc_number
+    || payload.document_number
+    || billingField(additionalInfo, ['doc_number', 'document_number', 'identification_number', 'cuit', 'tax_id'])
+  const documentType = billing.doc_type
+    || billing.document_type
+    || identification.type
+    || payload.doc_type
+    || payload.document_type
+    || billingField(additionalInfo, ['doc_type', 'document_type', 'identification_type'])
+  const legalName = billing.business_name
+    || billing.businessName
+    || billing.legal_name
+    || billing.legalName
+    || payload.business_name
+    || payload.businessName
+    || billingField(additionalInfo, ['business_name', 'businessname', 'legal_name', 'legalname', 'razon_social', 'razonsocial'])
+  const taxpayerType = billing.taxpayer_type
+    || billing.taxpayerType
+    || billing.tax_condition
+    || billing.taxCondition
+    || payload.taxpayer_type
+    || payload.taxpayerType
+    || billingField(additionalInfo, ['taxpayer_type', 'taxpayertype', 'taxpayer_type_id', 'tax_condition', 'taxcondition', 'condicion_fiscal', 'condicionfiscal'])
+  const taxpayerTypeId = typeof taxpayerType === 'object'
+    ? Number(taxpayerType.id || taxpayerType.code || taxpayerType.value) || null
+    : Number(billing.taxpayer_type_id || billing.taxConditionId || billingField(additionalInfo, ['taxpayer_type_id', 'taxconditionid'])) || null
+  const taxpayerDescription = typeof taxpayerType === 'object'
+    ? taxpayerType.description || taxpayerType.name || taxpayerType.label || ''
+    : String(taxpayerType || '').trim()
+
+  return {
+    raw: payload,
+    billing,
+    additionalInfo,
+    legalName: String(legalName || '').trim(),
+    documentType: String(documentType || '').trim(),
+    documentNumber: String(documentNumber || '').replace(/\D/g, ''),
+    taxpayerTypeId,
+    taxpayerDescription,
+  }
+}
+
+function sanitizedBillingFields(normalized) {
+  return {
+    hasBusinessName: Boolean(normalized.legalName),
+    documentType: normalized.documentType || null,
+    documentNumberSuffix: normalized.documentNumber ? normalized.documentNumber.slice(-4) : null,
+    taxpayerTypeId: normalized.taxpayerTypeId,
+    hasTaxpayerDescription: Boolean(normalized.taxpayerDescription),
+    additionalInfoKeys: billingInfoAdditionalEntries(normalized.additionalInfo)
+      .map((item) => String(item?.type || item?.name || '').trim())
+      .filter(Boolean)
+      .slice(0, 20),
+  }
+}
+
+async function getBillingInfoForOrder(orderId, suppliedToken) {
+  const token = suppliedToken || await getAccessToken()
+  const endpoint = `/orders/${encodeURIComponent(String(orderId))}/billing_info`
+  const response = await fetch(`${API_URL}${endpoint}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+      'X-Version': '2',
+    },
+  })
+  const payload = await response.json().catch(() => ({}))
+  const normalized = normalizeBillingInfoResponse(payload)
+  console.info('[mercadolibre] billing_info', {
+    endpoint,
+    status: response.status,
+    ok: response.ok,
+    fields: sanitizedBillingFields(normalized),
+  })
+  if (!response.ok) {
+    const error = new Error(payload.message || payload.error || `Mercado Libre billing_info respondió ${response.status}`)
+    error.status = response.status
+    throw error
+  }
+  return normalized
+}
+
 function fiscalDocumentReference(order = {}) {
   return String(order.pack_id || order.id || '').trim()
 }
@@ -285,6 +390,7 @@ export function selectFiscalLegalName({ billingInfo = {}, documentType = '' } = 
   const billing = billingInfo?.billing_info || billingInfo
   const additionalInfo = billing?.additional_info || billingInfo?.additional_info
   const candidates = [
+    billingInfo?.legalName,
     billing?.business_name,
     billing?.businessName,
     billing?.legal_name,
@@ -307,7 +413,8 @@ export function fiscalDisplayData(buyer = {}) {
   return { label: 'Nombre', value: name, displayName: name }
 }
 
-function normalizeOrder(order, fiscalInfo = {}) {
+function normalizeOrder(order, fiscalInfo = {}, billingInfo = {}) {
+  const normalizedBilling = normalizeBillingInfoResponse(billingInfo)
   const buyerName = [
     order.buyer?.first_name,
     order.buyer?.last_name,
@@ -328,6 +435,12 @@ function normalizeOrder(order, fiscalInfo = {}) {
     customer,
     documentType: 'Sin datos',
     documentNumber: String(order.buyer?.id || 'Pendiente'),
+    fiscalLegalName: normalizedBilling.legalName || null,
+    fiscalDocumentType: normalizedBilling.documentType || null,
+    fiscalDocumentNumber: normalizedBilling.documentNumber || null,
+    taxCondition: normalizedBilling.taxpayerDescription || null,
+    taxConditionId: normalizedBilling.taxpayerTypeId,
+    billingInfoError: billingInfo?.error || null,
     total: Number(order.total_amount || order.paid_amount || 0),
 
     // La factura informada por Mercado Libre tiene prioridad sobre el estado de pago.
@@ -366,6 +479,7 @@ function sumPaymentFees(payments) {
 }
 
 function buildOrderDetail(order, shipment, billingInfo, fiscalInfo = {}) {
+  const normalizedBilling = normalizeBillingInfoResponse(billingInfo || {})
   const payments = Array.isArray(order.payments) ? order.payments : []
   const receiverAddress =
     shipment?.receiver_address
@@ -373,39 +487,25 @@ function buildOrderDetail(order, shipment, billingInfo, fiscalInfo = {}) {
     || null
 
   const billingAddress =
-    billingInfo?.billing_info?.additional_info
-    || billingInfo?.additional_info
+    normalizedBilling.additionalInfo
     || null
 
   const buyerName = [
-    billingInfo?.billing_info?.name,
-    billingInfo?.name,
+    normalizedBilling.billing?.name,
+    normalizedBilling.billing?.legal_name,
     order.buyer?.first_name,
     order.buyer?.last_name,
   ].filter(Boolean).join(' ').trim()
 
   const documentType =
-    billingInfo?.billing_info?.doc_type
-    || billingInfo?.doc_type
+    normalizedBilling.documentType
     || 'Sin datos'
 
   const documentNumber =
-    billingInfo?.billing_info?.doc_number
-    || billingInfo?.doc_number
-    || 'Sin datos'
+    normalizedBilling.documentNumber || 'Sin datos'
 
-  const billing = billingInfo?.billing_info || billingInfo || {}
-  const taxConditionValue = billing.tax_condition
-    || billing.taxCondition
-    || billing.taxpayer_type
-    || billing.taxpayerType
-    || additionalInfoValue(billingAddress, ['tax_condition', 'taxcondition', 'taxpayer_type', 'taxpayertype', 'condicion_fiscal', 'condicionfiscal'])
-  const taxCondition = typeof taxConditionValue === 'object'
-    ? taxConditionValue.description || taxConditionValue.name || taxConditionValue.value || ''
-    : String(taxConditionValue || '').trim()
-  const taxConditionId = typeof taxConditionValue === 'object'
-    ? Number(taxConditionValue.id || taxConditionValue.code || taxConditionValue.value) || null
-    : null
+  const taxCondition = normalizedBilling.taxpayerDescription
+  const taxConditionId = normalizedBilling.taxpayerTypeId
 
   const phone =
     receiverAddress?.receiver_phone
@@ -457,7 +557,7 @@ function buildOrderDetail(order, shipment, billingInfo, fiscalInfo = {}) {
       id: order.buyer?.id ? String(order.buyer.id) : null,
       nickname: order.buyer?.nickname || null,
       name: buyerName || order.buyer?.nickname || 'Sin datos',
-      fiscalLegalName: selectFiscalLegalName({ billingInfo, documentType }),
+      fiscalLegalName: normalizedBilling.legalName || selectFiscalLegalName({ billingInfo, documentType }),
       documentType,
       documentNumber: String(documentType.toUpperCase().includes('CUIT') ? onlyDigits(documentNumber) : documentNumber),
       taxCondition,
@@ -606,7 +706,8 @@ export async function getFiscalDocuments(orderId) {
   if (!orderId) throw new Error('Falta el ID de la venta')
 
   const safeOrderId = encodeURIComponent(String(orderId))
-  const order = await apiFetch(`/orders/${safeOrderId}`)
+  const token = await getAccessToken()
+  const order = await apiFetch(`/orders/${safeOrderId}`, token)
   return readFiscalDocumentsForOrder(order)
 }
 
@@ -621,20 +722,18 @@ export async function getOrderDetail(orderId) {
 
   if (order.shipping?.id) {
     try {
-      shipment = await apiFetch(
-        `/shipments/${encodeURIComponent(String(order.shipping.id))}`
-      )
+      shipment = await apiFetch(`/shipments/${encodeURIComponent(String(order.shipping.id))}`, token)
     } catch {
       shipment = null
     }
   }
 
-  // Se mantiene el endpoint actual para no romper el funcionamiento existente.
-  // Más adelante conviene migrarlo al nuevo flujo de billing_info v2.
+  let billingInfoError = null
   try {
-    billingInfo = await apiFetch(`/orders/${safeOrderId}/billing_info`)
-  } catch {
+    billingInfo = await getBillingInfoForOrder(orderId, token)
+  } catch (error) {
     billingInfo = null
+    billingInfoError = error.message
   }
 
   const fiscalInfo = await readFiscalDocumentsForOrder(order)
@@ -645,6 +744,7 @@ export async function getOrderDetail(orderId) {
       order,
       shipment,
       billingInfo,
+      billingInfoError,
       fiscalInfo,
     },
   }
@@ -937,15 +1037,25 @@ export async function syncOrders({ page = 1, pageSize = 50 } = {}) {
   const rawOrders = Array.isArray(result.results) ? result.results : []
   const token = await getAccessToken()
 
-  // Consulta las facturas en grupos de 5 para evitar sobrecargar la API.
+  // Consulta facturación y documentos en grupos de 5 para evitar sobrecargar la API.
   const fiscalInformation = await mapWithConcurrency(
     rawOrders,
     INVOICE_CHECK_CONCURRENCY,
-    (order) => readFiscalDocumentsForOrder(order, token)
+    async (order) => {
+      const [fiscalInfo, billingResult] = await Promise.all([
+        readFiscalDocumentsForOrder(order, token),
+        getBillingInfoForOrder(order.id, token).catch((error) => ({ error: error.message })),
+      ])
+      return { fiscalInfo, billingInfo: billingResult }
+    },
   )
 
   const orders = rawOrders.map(
-    (order, index) => normalizeOrder(order, fiscalInformation[index])
+    (order, index) => normalizeOrder(
+      order,
+      fiscalInformation[index]?.fiscalInfo,
+      fiscalInformation[index]?.billingInfo,
+    )
   )
 
   const total = Number(result.paging?.total ?? orders.length)
