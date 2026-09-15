@@ -54,6 +54,13 @@ assert.deepEqual(normalizeBillingInfoResponse({
   documentNumber: '30123456789',
   taxpayerTypeId: 1,
   taxpayerDescription: 'IVA Responsable Inscripto',
+  address: {
+    streetName: '',
+    streetNumber: '',
+    city: '',
+    state: '',
+    zipCode: '',
+  },
 })
 assert.deepEqual(fiscalDisplayData({ documentType: 'CUIT', fiscalLegalName: 'ACME SRL', name: 'nickname' }), {
   label: 'Razón social',
@@ -147,6 +154,28 @@ assert.equal(normalizeBillingInfoResponse({
     },
   },
 }).taxpayerTypeId, 5)
+
+const modernBillingInfo = normalizeBillingInfoResponse({
+  billing_info: {
+    id: 'billing-reference-1',
+    name: 'ELENA DE LOS ANGELES ALANCAY',
+    identification: { type: 'DNI', number: '39333135' },
+    taxpayer_type: { id: '05', description: 'Consumidor Final' },
+    address: {
+      street_name: 'Calle la Amistad',
+      street_number: '557',
+      city_name: 'Moreno',
+      state_name: 'Buenos Aires',
+      zip_code: '1744',
+    },
+  },
+})
+assert.equal(modernBillingInfo.fullName, 'ELENA DE LOS ANGELES ALANCAY')
+assert.equal(modernBillingInfo.documentType, 'DNI')
+assert.equal(modernBillingInfo.documentNumber, '39333135')
+assert.equal(modernBillingInfo.taxpayerTypeId, 5)
+assert.equal(modernBillingInfo.taxpayerDescription, 'Consumidor Final')
+assert.equal(modernBillingInfo.address.streetName, 'Calle la Amistad')
 
 assert.deepEqual(associatedVoucherFor({ cae: '123', voucher: { voucherType: 1, pointOfSale: 3, voucherNumber: 42 } }), {
   type: 1,

@@ -618,6 +618,12 @@ function Home() {
                   <div><small>Razón social / Nombre</small><strong>{textOrDash(billing.legalName || billing.name)}</strong></div>
                   <div><small>{textOrDash(billing.documentType || documentType)}</small><strong>{textOrDash(billing.documentNumber || documentNumber)}</strong></div>
                   <div><small>Condición IVA</small><strong>{textOrDash(billing.taxCondition)}</strong></div>
+                  <div><small>Domicilio fiscal</small><strong>{textOrDash([
+                    billing.address?.streetName,
+                    billing.address?.streetNumber,
+                    billing.address?.city,
+                    billing.address?.state,
+                  ].filter(Boolean).join(' '))}</strong></div>
                 </div>
                 {orderDetail?.billingInfoError && (
                   <small className="financial-note">Mercado Libre: {orderDetail.billingInfoError}</small>
