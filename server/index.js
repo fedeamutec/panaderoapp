@@ -18,7 +18,7 @@ import {
 import { generateCsr, getArcaStatus, readCsr, saveCertificate } from './arca/certificates.js'
 import { testArcaConnection } from './arca/wsaa.js'
 import { getPersonaByCuit, normalizeCuit } from './arca/padron.js'
-import { matchReceiverVatCondition, sanitizeFiscalValue } from './fiscalRules.js'
+import { resolveBillingVatCondition, sanitizeFiscalValue } from './fiscalRules.js'
 import {
   createCreditNote,
   createSaleInvoice,
@@ -108,47 +108,42 @@ async function resolveSaleFiscalSnapshot({ detail = {}, invoiceType, requestId }
   const buyer = detail.buyer || {}
   const identity = documentIdentity(buyer)
   if (!identity.documentType || !identity.documentNumber) {
-    throw new Error('La venta no tiene un documento fiscal válido para emitir.')
+    throw new Error(`Mercado Libre no informó un documento fiscal válido (${detail.billingInfoError || 'faltan doc_number/identification.number'}).`)
   }
-
-  const fiscalReceiver = await resolveFiscalReceiverName({ buyer, requestId })
-  const vatConditionsResponse = await getReceiverVatConditions({ voucherClass: invoiceType })
-  const taxCondition = buyer.taxCondition || (identity.documentType === 'DNI' ? 'Consumidor Final' : '')
+  if (detail.billingInfoError) throw new Error(`Mercado Libre billing_info no pudo consultarse: ${detail.billingInfoError}`)
+  if (identity.documentType === 'CUIT' && !String(buyer.fiscalLegalName || '').trim()) {
+    throw new Error('Mercado Libre billing_info no informó business_name para el CUIT.')
+  }
+  if (identity.documentType === 'DNI' && !String(buyer.billingName || '').trim()) {
+    throw new Error('Mercado Libre billing_info no informó el nombre y apellido del receptor.')
+  }
   const taxConditionInput = buyer.taxConditionId
-    ? { id: buyer.taxConditionId, description: taxCondition }
-    : taxCondition
+    ? { id: buyer.taxConditionId, description: buyer.taxCondition }
+    : buyer.taxCondition
   console.info('[fiscal] condición receptor sanitizada', {
     requestId: String(requestId || ''),
     invoiceType,
     documentType: identity.documentType,
     documentNumberSuffix: identity.documentNumber.slice(-4),
     mercadoLibre: sanitizeFiscalValue(taxConditionInput),
-    arcaConditions: (vatConditionsResponse.conditions || []).map(sanitizeFiscalValue),
   })
-  const receiverVatCondition = matchReceiverVatCondition(
-    vatConditionsResponse.conditions || [],
-    taxConditionInput,
-    invoiceType,
-  )
-  if (!receiverVatCondition?.id || !receiverVatCondition.description) {
-    throw new Error('No se pudo resolver una condición IVA fiscal válida para la venta.')
-  }
+  const receiverVatCondition = resolveBillingVatCondition(taxConditionInput, invoiceType)
 
   return {
     invoiceType,
     documentType: identity.documentType,
     documentNumber: identity.documentNumber,
-    fiscalLegalName: identity.documentType === 'CUIT' ? fiscalReceiver.name : '',
+    fiscalLegalName: identity.documentType === 'CUIT' ? buyer.fiscalLegalName : '',
     ...fiscalDisplayData({
       documentType: identity.documentType,
-      fiscalLegalName: fiscalReceiver.name,
-      name: buyer.name,
+      fiscalLegalName: identity.documentType === 'CUIT' ? buyer.fiscalLegalName : buyer.billingName,
+      name: buyer.billingName,
     }),
     receiverVatCondition: {
       id: Number(receiverVatCondition.id),
       description: receiverVatCondition.description,
     },
-    fiscalReceiver,
+    fiscalReceiver: { name: buyer.fiscalLegalName || buyer.billingName || '', source: 'mercadolibre-billing-info' },
   }
 }
 

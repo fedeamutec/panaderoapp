@@ -210,20 +210,37 @@ export function normalizeBillingInfoResponse(payload = {}) {
     || billingField(additionalInfo, ['taxpayer_type', 'taxpayertype', 'taxpayer_type_id', 'tax_condition', 'taxcondition', 'condicion_fiscal', 'condicionfiscal'])
   const taxpayerTypeId = typeof taxpayerType === 'object'
     ? Number(taxpayerType.id || taxpayerType.code || taxpayerType.value) || null
-    : Number(billing.taxpayer_type_id || billing.taxConditionId || billingField(additionalInfo, ['taxpayer_type_id', 'taxconditionid'])) || null
+    : Number(taxpayerType || billing.taxpayer_type_id || billing.taxConditionId || billingField(additionalInfo, ['taxpayer_type_id', 'taxconditionid'])) || null
   const taxpayerDescription = typeof taxpayerType === 'object'
     ? taxpayerType.description || taxpayerType.name || taxpayerType.label || ''
     : String(taxpayerType || '').trim()
+  const firstName = billing.first_name || billing.firstName || payload.first_name || ''
+  const lastName = billing.last_name || billing.lastName || payload.last_name || ''
+  const fullName = billing.name || [firstName, lastName].filter(Boolean).join(' ') || payload.name || ''
 
   return {
     raw: payload,
     billing,
     additionalInfo,
     legalName: String(legalName || '').trim(),
+    fullName: String(fullName || '').trim(),
     documentType: String(documentType || '').trim(),
     documentNumber: String(documentNumber || '').replace(/\D/g, ''),
     taxpayerTypeId,
     taxpayerDescription,
+  }
+}
+
+function sanitizedBillingStructure(payload = {}) {
+  const billing = payload?.billing_info || payload || {}
+  const additionalInfo = billing?.additional_info || payload?.additional_info || []
+  return {
+    topLevelKeys: Object.keys(payload || {}).slice(0, 30),
+    billingInfoKeys: Object.keys(billing || {}).slice(0, 30),
+    additionalInfoKeys: billingInfoAdditionalEntries(additionalInfo)
+      .map((item) => String(item?.type || item?.name || '').trim())
+      .filter(Boolean)
+      .slice(0, 30),
   }
 }
 
@@ -258,6 +275,7 @@ async function getBillingInfoForOrder(orderId, suppliedToken) {
     status: response.status,
     ok: response.ok,
     fields: sanitizedBillingFields(normalized),
+    structure: sanitizedBillingStructure(payload),
   })
   if (!response.ok) {
     const error = new Error(payload.message || payload.error || `Mercado Libre billing_info respondió ${response.status}`)
@@ -436,6 +454,7 @@ function normalizeOrder(order, fiscalInfo = {}, billingInfo = {}) {
     documentType: 'Sin datos',
     documentNumber: String(order.buyer?.id || 'Pendiente'),
     fiscalLegalName: normalizedBilling.legalName || null,
+    billingName: normalizedBilling.fullName || null,
     fiscalDocumentType: normalizedBilling.documentType || null,
     fiscalDocumentNumber: normalizedBilling.documentNumber || null,
     taxCondition: normalizedBilling.taxpayerDescription || null,
@@ -558,6 +577,7 @@ function buildOrderDetail(order, shipment, billingInfo, fiscalInfo = {}) {
       nickname: order.buyer?.nickname || null,
       name: buyerName || order.buyer?.nickname || 'Sin datos',
       fiscalLegalName: normalizedBilling.legalName || selectFiscalLegalName({ billingInfo, documentType }),
+      billingName: normalizedBilling.fullName || null,
       documentType,
       documentNumber: String(documentType.toUpperCase().includes('CUIT') ? onlyDigits(documentNumber) : documentNumber),
       taxCondition,
@@ -715,7 +735,8 @@ export async function getOrderDetail(orderId) {
   if (!orderId) throw new Error('Falta el ID de la venta')
 
   const safeOrderId = encodeURIComponent(String(orderId))
-  const order = await apiFetch(`/orders/${safeOrderId}`)
+  const token = await getAccessToken()
+  const order = await apiFetch(`/orders/${safeOrderId}`, token)
 
   let shipment = null
   let billingInfo
@@ -736,10 +757,13 @@ export async function getOrderDetail(orderId) {
     billingInfoError = error.message
   }
 
-  const fiscalInfo = await readFiscalDocumentsForOrder(order)
+  const fiscalInfo = await readFiscalDocumentsForOrder(order, token)
 
   return {
-    detail: buildOrderDetail(order, shipment, billingInfo, fiscalInfo),
+    detail: {
+      ...buildOrderDetail(order, shipment, billingInfo, fiscalInfo),
+      billingInfoError,
+    },
     raw: {
       order,
       shipment,

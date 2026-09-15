@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { fiscalDisplayData, normalizeBillingInfoResponse, selectFiscalLegalName } from './mercadolibre.js'
-import { matchReceiverVatCondition, sanitizeFiscalValue } from './fiscalRules.js'
+import { matchReceiverVatCondition, resolveBillingVatCondition, sanitizeFiscalValue } from './fiscalRules.js'
 import {
   associatedVoucherFor,
   buildCreditNoteDetailXml,
@@ -48,6 +48,7 @@ assert.deepEqual(normalizeBillingInfoResponse({
   },
   additionalInfo: [{ type: 'taxpayer_type', value: { id: 1, description: 'IVA Responsable Inscripto' } }],
   legalName: 'ACME SRL',
+  fullName: '',
   documentType: 'CUIT',
   documentNumber: '30123456789',
   taxpayerTypeId: 1,
@@ -78,6 +79,22 @@ assert.deepEqual(sanitizeFiscalValue({ id: 1, description: 'IVA Responsable Insc
   id: 1,
   description: 'IVA RESPONSABLE INSCRIPTO',
 })
+assert.deepEqual(resolveBillingVatCondition({ id: 1, description: 'IVA Responsable Inscripto' }, 'A'), {
+  id: 1,
+  description: 'Responsable Inscripto',
+})
+assert.deepEqual(resolveBillingVatCondition({ id: 5, description: 'Consumidor Final' }, 'B'), {
+  id: 5,
+  description: 'Consumidor Final',
+})
+assert.equal(normalizeBillingInfoResponse({
+  billing_info: {
+    business_name: 'ACME SRL',
+    doc_number: '30-12345678-9',
+    doc_type: 'CUIT',
+    taxpayer_type: 1,
+  },
+}).taxpayerTypeId, 1)
 
 assert.deepEqual(associatedVoucherFor({ cae: '123', voucher: { voucherType: 1, pointOfSale: 3, voucherNumber: 42 } }), {
   type: 1,
