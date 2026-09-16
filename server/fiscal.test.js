@@ -177,6 +177,23 @@ assert.equal(modernBillingInfo.taxpayerTypeId, 5)
 assert.equal(modernBillingInfo.taxpayerDescription, 'Consumidor Final')
 assert.equal(modernBillingInfo.address.streetName, 'Calle la Amistad')
 
+const buyerWrappedBilling = normalizeBillingInfoResponse({
+  id: '887502873031617345',
+  site_id: 'MLA',
+  buyer: {
+    billing_info: {
+      name: 'MARCELO MIGUEL ARTOLA',
+      identification: { type: 'DNI', number: '19609821' },
+      taxpayer_type: { id: '05', description: 'Consumidor Final' },
+    },
+  },
+  seller: { name: 'MONOSTOCK' },
+})
+assert.equal(buyerWrappedBilling.fullName, 'MARCELO MIGUEL ARTOLA')
+assert.equal(buyerWrappedBilling.documentType, 'DNI')
+assert.equal(buyerWrappedBilling.documentNumber, '19609821')
+assert.equal(buyerWrappedBilling.taxpayerTypeId, 5)
+
 assert.deepEqual(associatedVoucherFor({ cae: '123', voucher: { voucherType: 1, pointOfSale: 3, voucherNumber: 42 } }), {
   type: 1,
   pointOfSale: 3,
