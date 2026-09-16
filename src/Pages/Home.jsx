@@ -612,7 +612,7 @@ function Home() {
                 </div>
               </div>
 
-              <div className="detail-block">
+              <div className="detail-block billing-detail-card">
                 <div className="section-label">Datos de facturación</div>
                 <div className="data-grid">
                   <div><small>Razón social / Nombre</small><strong>{textOrDash(billing.legalName || billing.name)}</strong></div>
