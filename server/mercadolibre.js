@@ -185,12 +185,30 @@ function billingScalar(value) {
   return value.value ?? value.id ?? value.code ?? value.description ?? value.name ?? ''
 }
 
+function deepBillingField(value, names, visited = new Set()) {
+  if (!value || typeof value !== 'object' || visited.has(value)) return ''
+  visited.add(value)
+  const key = (entry) => String(entry || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+  const wanted = new Set(names.map(key))
+  for (const [name, entry] of Object.entries(value)) {
+    if (wanted.has(key(name)) && entry !== null && entry !== undefined && entry !== '') return entry
+  }
+  for (const entry of Object.values(value)) {
+    const found = deepBillingField(entry, names, visited)
+    if (found !== '') return found
+  }
+  return ''
+}
+
 export function normalizeBillingInfoResponse(payload = {}) {
   // getBillingInfoForOrder already returns this normalized shape. Keeping this
   // function idempotent prevents a second pass from discarding fiscal fields.
   if (payload?.__normalizedBillingInfo === true) return payload
 
-  const billing = payload?.billing_info || payload || {}
+  // La API nueva devuelve { id, site_id, buyer, seller }. Los datos fiscales
+  // pertenecen exclusivamente a buyer; nunca deben tomarse desde seller.
+  const root = payload?.billing_info || payload || {}
+  const billing = root?.buyer?.billing_info || root?.buyer || root
   const additionalInfo = billing?.additional_info || payload?.additional_info || []
   const identification = billing?.identification || payload?.identification || {}
   const documentNumber = billing.doc_number
@@ -199,12 +217,14 @@ export function normalizeBillingInfoResponse(payload = {}) {
     || payload.doc_number
     || payload.document_number
     || billingField(additionalInfo, ['doc_number', 'document_number', 'identification', 'identification_number', 'cuit', 'tax_id'])
+    || deepBillingField(billing, ['doc_number', 'document_number', 'identification_number', 'cuit', 'tax_id'])
   const documentType = billing.doc_type
     || billing.document_type
     || identification.type
     || payload.doc_type
     || payload.document_type
     || billingField(additionalInfo, ['doc_type', 'document_type', 'identification_type'])
+    || deepBillingField(billing, ['doc_type', 'document_type', 'identification_type'])
   const legalName = billing.business_name
     || billing.businessName
     || billing.legal_name
@@ -212,6 +232,7 @@ export function normalizeBillingInfoResponse(payload = {}) {
     || payload.business_name
     || payload.businessName
     || billingField(additionalInfo, ['business_name', 'businessname', 'legal_name', 'legalname', 'razon_social', 'razonsocial'])
+    || deepBillingField(billing, ['business_name', 'businessname', 'legal_name', 'legalname', 'razon_social', 'razonsocial'])
   const taxpayerType = billing.taxpayer_type
     || billing.taxpayerType
     || billing.tax_condition
@@ -219,6 +240,7 @@ export function normalizeBillingInfoResponse(payload = {}) {
     || payload.taxpayer_type
     || payload.taxpayerType
     || billingField(additionalInfo, ['taxpayer_type', 'taxpayertype', 'taxpayer_type_id', 'tax_condition', 'taxcondition', 'condicion_fiscal', 'condicionfiscal'])
+    || deepBillingField(billing, ['taxpayer_type', 'taxpayertype', 'taxpayer_type_id', 'tax_condition', 'taxcondition', 'condicion_fiscal', 'condicionfiscal'])
   const taxpayerTypeId = typeof taxpayerType === 'object'
     ? Number(taxpayerType.id || taxpayerType.code || taxpayerType.value) || null
     : Number(taxpayerType || billing.taxpayer_type_id || billing.taxConditionId || billingField(additionalInfo, ['taxpayer_type_id', 'taxconditionid'])) || null
@@ -229,14 +251,17 @@ export function normalizeBillingInfoResponse(payload = {}) {
     || billing.firstName
     || payload.first_name
     || billingField(additionalInfo, ['first_name', 'firstname'])
+    || deepBillingField(billing, ['first_name', 'firstname'])
   const lastName = billing.last_name
     || billing.lastName
     || payload.last_name
     || billingField(additionalInfo, ['last_name', 'lastname'])
+    || deepBillingField(billing, ['last_name', 'lastname'])
   const fullName = billing.name
     || [billingScalar(firstName), billingScalar(lastName)].filter(Boolean).join(' ')
     || payload.name
     || billingField(additionalInfo, ['full_name', 'fullname', 'name'])
+    || deepBillingField(billing, ['full_name', 'fullname', 'name'])
 
   const address = billing.address
     || payload.address
@@ -284,10 +309,12 @@ function mergeBillingSources(...sources) {
 
 function sanitizedBillingStructure(payload = {}) {
   const billing = payload?.billing_info || payload || {}
+  const buyer = billing?.buyer || {}
   const additionalInfo = billing?.additional_info || payload?.additional_info || []
   return {
     topLevelKeys: Object.keys(payload || {}).slice(0, 30),
     billingInfoKeys: Object.keys(billing || {}).slice(0, 30),
+    buyerKeys: Object.keys(buyer || {}).slice(0, 30),
     additionalInfoKeys: billingInfoAdditionalEntries(additionalInfo)
       .map((item) => String(item?.type || item?.name || '').trim())
       .filter(Boolean)
