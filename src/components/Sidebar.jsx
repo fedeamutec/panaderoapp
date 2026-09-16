@@ -16,12 +16,12 @@ const mainItems = [
   { icon: 'home', label: 'Inicio', section: 'inicio' },
   { icon: 'sales', label: 'Mercado Libre', section: 'ventas', accent: 'mercadolibre' },
   { icon: 'budget', label: 'Presupuesto', section: 'presupuestos', accent: 'presupuesto' },
-  { icon: 'invoices', label: 'Facturas', section: 'facturas' },
+  { icon: 'invoices', label: 'Facturas', section: 'facturas', accent: 'facturas' },
   { icon: 'arca', label: 'ARCA', section: 'arca', accent: 'arca' },
 ]
 
 const secondaryItems = [
-  { icon: 'reports', label: 'Reportes', section: 'reportes' },
+  { icon: 'reports', label: 'Reportes / Mapa', section: 'reportes', accent: 'reportes' },
 ]
 
 const themeLabels = { cursor: 'Cursor', black: 'Black', paper: 'Paper' }

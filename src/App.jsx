@@ -7,6 +7,7 @@ import ArcaSettings from './Pages/ArcaSettings'
 import Login from './Pages/Login'
 import Budgets from './Pages/Budgets'
 import Reports from './Pages/Reports'
+import Dashboard from './Pages/Dashboard'
 
 const THEMES = ['cursor', 'black', 'paper']
 
@@ -85,7 +86,9 @@ function App() {
         collapsed={sidebarCollapsed}
         onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
       />
-      {activeSection === 'presupuestos' ? (
+      {activeSection === 'inicio' ? (
+        <Dashboard onNavigate={setActiveSection} />
+      ) : activeSection === 'presupuestos' ? (
         <Budgets />
       ) : activeSection === 'facturas' ? (
         <Invoices onNavigateToSales={() => setActiveSection('ventas')} />

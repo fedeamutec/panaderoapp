@@ -15,7 +15,7 @@ function Topbar({ account, loading, onSync, onConnect, onDisconnect, section = '
       </div>
 
       {!isArca && <div className="topbar-actions">
-        <div className="connection-pill">
+        <div className={`connection-pill ${connected ? 'connected' : ''}`}>
           <span className={`status-dot ${connected ? 'connected' : ''}`} />
           <span>
             <strong>Mercado Libre</strong>
