@@ -44,7 +44,7 @@ const modules = [
 function Dashboard({ onNavigate }) {
   return (
     <main className="dashboard-page">
-      <section className="dashboard-hero">
+      <section className="dashboard-hero section-banner section-banner-inicio">
         <div>
           <span className="dashboard-kicker">Centro de operaciones</span>
           <h1>Panadero conecta cada parte de tu negocio</h1>

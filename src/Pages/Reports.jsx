@@ -224,7 +224,7 @@ function Reports() {
 
   return (
     <main className="reports-page">
-      <header className="reports-header report-map-header">
+      <header className="reports-header report-map-header section-banner section-banner-reportes">
         <div><span>Mercado Libre · distribución geográfica</span><h1>Mapa de clientes</h1><p>Vista de ventas y clientes por provincia para planificar acciones comerciales locales.</p></div>
         <div className="report-header-actions">
           <select value={period} onChange={(event) => { setLoading(true); setError(''); setPeriod(event.target.value) }} disabled={loading}>

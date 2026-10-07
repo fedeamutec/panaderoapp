@@ -4,7 +4,7 @@ function Topbar({ account, loading, onSync, onConnect, onDisconnect, section = '
   const isArca = section === 'arca'
 
   return (
-    <header className="topbar">
+    <header className={`topbar section-banner section-banner-${section}`}>
       <div>
         <div className="breadcrumb">
           <span>Panadero</span>

@@ -1025,7 +1025,7 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
 
   return (
     <main className={`budget-workspace ${invoiceMode ? 'invoice-builder-workspace' : ''}`}>
-      <header className="budget-topbar">
+      <header className={`budget-topbar section-banner section-banner-${invoiceMode ? 'facturas' : 'presupuestos'}`}>
         <div className="budget-title-block">
           <span>{invoiceMode ? 'Facturación directa · ARCA' : 'Gestión comercial'}</span>
           <h1>{invoiceMode ? 'Nueva factura' : 'Presupuesto'}</h1>
