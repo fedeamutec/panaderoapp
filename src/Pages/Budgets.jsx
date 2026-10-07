@@ -214,7 +214,8 @@ function TransportPreview({ brand, client, items, number }) {
   )
 }
 
-function Budgets() {
+function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
+  const invoiceMode = mode === 'invoice'
   const [clients, setClients] = useState(() => readStored(CLIENTS_KEY, defaultClients))
   const [products, setProducts] = useState(() => readStored(PRODUCTS_KEY, defaultProducts))
   const [manualProducts, setManualProducts] = useState(() => readStored(MANUAL_PRODUCTS_KEY, []))
@@ -232,7 +233,7 @@ function Budgets() {
   const [productQuery, setProductQuery] = useState('')
   const [priceQuery, setPriceQuery] = useState('')
   const [items, setItems] = useState([])
-  const [documentType, setDocumentType] = useState('budget')
+  const [documentType, setDocumentType] = useState(() => invoiceMode ? 'invoice-a' : 'budget')
   const [commercialInvoice, setCommercialInvoice] = useState(null)
   const [invoiceSequence, setInvoiceSequence] = useState(null)
   const [invoiceSequenceLoading, setInvoiceSequenceLoading] = useState(false)
@@ -538,10 +539,13 @@ function Budgets() {
   }
 
   const createCurrentSnapshot = ({ draft = false } = {}) => ({
-    number: confirmedBudget?.number || nextNumber,
+    number: documentType === 'budget'
+      ? (confirmedBudget?.number || nextNumber)
+      : (commercialInvoice?.voucher?.formattedNumber || invoiceSequence?.formattedNextNumber || '—'),
     client: { ...(clientDraft || selectedClient || {}) },
     items: items.map((item) => ({ ...item })),
     brand: { ...brand },
+    documentType,
     draft,
   })
 
@@ -1020,9 +1024,26 @@ function Budgets() {
   }
 
   return (
-    <main className="budget-workspace">
+    <main className={`budget-workspace ${invoiceMode ? 'invoice-builder-workspace' : ''}`}>
       <header className="budget-topbar">
-        <div className="budget-title-block"><span>Gestión comercial</span><h1>Presupuesto</h1><div className="budget-view-tabs"><button type="button" className={viewMode === 'new' ? 'active' : ''} onClick={() => setViewMode('new')}>Nuevo presupuesto</button><button type="button" className={viewMode === 'generated' ? 'active' : ''} onClick={() => setViewMode('generated')}>Presupuestos generados <small>{generatedBudgets.length}</small></button></div></div>
+        <div className="budget-title-block">
+          <span>{invoiceMode ? 'Facturación directa · ARCA' : 'Gestión comercial'}</span>
+          <h1>{invoiceMode ? 'Nueva factura' : 'Presupuesto'}</h1>
+          <div className="budget-view-tabs">
+            {invoiceMode ? (
+              <>
+                <button type="button" className={documentType === 'invoice-a' ? 'active' : ''} onClick={() => setDocumentType('invoice-a')}>Factura A</button>
+                <button type="button" className={documentType === 'invoice-b' ? 'active' : ''} onClick={() => setDocumentType('invoice-b')}>Factura B</button>
+                <button type="button" onClick={onShowInvoiceHistory}>Comprobantes emitidos</button>
+              </>
+            ) : (
+              <>
+                <button type="button" className={viewMode === 'new' ? 'active' : ''} onClick={() => setViewMode('new')}>Nuevo presupuesto</button>
+                <button type="button" className={viewMode === 'generated' ? 'active' : ''} onClick={() => setViewMode('generated')}>Presupuestos generados <small>{generatedBudgets.length}</small></button>
+              </>
+            )}
+          </div>
+        </div>
         <div className="budget-topbar-actions">
           <label className="ghost-button budget-file-button">Importar clientes<input ref={clientInput} type="file" accept=".xlsx,.xls" onChange={importClients} /></label>
           <button className="ghost-button" type="button" onClick={() => downloadClientsCsv(clients)}>Exportar clientes</button>
@@ -1036,11 +1057,7 @@ function Budgets() {
       {notice && <button type="button" className={`notice-bar ${noticeTone(notice)}`} onClick={() => setNotice('')}><span>{notice}</span><strong>×</strong></button>}
 
       <section className="budget-fx-strip">
-        <div className="commercial-document-tabs" aria-label="Tipo de documento">
-          <button type="button" className={documentType === 'budget' ? 'active' : ''} onClick={() => setDocumentType('budget')}>Presupuesto</button>
-          <button type="button" className={documentType === 'invoice-a' ? 'active' : ''} onClick={() => setDocumentType('invoice-a')}>Factura A</button>
-          <button type="button" className={documentType === 'invoice-b' ? 'active' : ''} onClick={() => setDocumentType('invoice-b')}>Factura B</button>
-        </div>
+        {invoiceMode && <div className="invoice-arca-badge"><span>ARCA</span><strong>Emisión real con CAE</strong></div>}
         <div className="budget-fx-source"><span>Dólar BNA · Billete</span><small>{fxLoading ? 'Actualizando…' : fx.manual ? 'Cotización manual' : [fx.date, fx.time].filter(Boolean).join(' · ') || 'Última cotización disponible'}</small></div>
         <div className="budget-fx-value"><span>Compra</span><strong>{fx.buy ? formatCurrency(fx.buy) : '—'}</strong></div>
         <label className="budget-fx-value editable"><span>Venta usada</span><input type="number" min="0" step="0.01" value={fx.sell || ''} onChange={(event) => updateFxSell(event.target.value)} placeholder="Cotización" /></label>
@@ -1059,7 +1076,7 @@ function Budgets() {
         </section>
       )}
 
-      {viewMode === 'new' ? (
+      {invoiceMode || viewMode === 'new' ? (
         <div className={`budget-columns ${clientsCollapsed ? 'clients-collapsed' : ''}`}>
           <aside className={`budget-clients-column ${clientsCollapsed ? 'collapsed' : ''}`}>
             <div className="budget-column-heading"><div className="budget-clients-title"><span>Base comercial</span><strong>Clientes</strong></div><div className="budget-heading-actions">{!clientsCollapsed && <><small>{clients.length}</small><button type="button" className="budget-add-client" onClick={addClient}>＋ Agregar</button></>}<button type="button" className="budget-clients-collapse" onClick={() => setClientsCollapsed((value) => !value)} aria-label={clientsCollapsed ? 'Mostrar clientes' : 'Ocultar clientes'}>{clientsCollapsed ? '›' : '‹'}</button></div></div>
@@ -1123,9 +1140,9 @@ function Budgets() {
           </section>
 
           <section className="budget-preview-column">
-            <div className="budget-column-heading budget-preview-heading"><div><span>Documento</span><strong>Vista previa</strong></div><div className="budget-preview-actions"><button className="ghost-button" type="button" onClick={printDraft}>Guardar borrador</button><button className="ghost-button budget-confirm-button" type="button" disabled={invoiceEmitting} onClick={documentType === 'budget' ? confirmBudget : emitCommercialInvoice}>{documentType === 'budget' ? 'Confirmar' : invoiceEmitting ? 'Emitiendo…' : 'Emitir en ARCA'}</button><button className="ghost-button" type="button" disabled={documentType !== 'budget' || !confirmedBudget} onClick={() => printTransport(confirmedBudget)}>Transporte</button><button className="primary-button" type="button" disabled={documentType === 'budget' ? !confirmedBudget : !commercialInvoice} onClick={documentType === 'budget' ? () => printConfirmedBudget(confirmedBudget) : openCommercialInvoicePdf}>PDF / Descargar</button></div></div>
-            <div className="budget-brand-tabs" aria-label="Marcas de presupuesto">
-              {brands.map((item) => <button key={item.id} type="button" className={item.id === brand.id ? 'active' : ''} onClick={() => selectBrand(item.id)}><span>{item.name || 'Sin nombre'}</span><small>N.º {String(item.id === brand.id ? nextNumber : item.nextNumber || 1).padStart(6, '0')}</small></button>)}
+            <div className="budget-column-heading budget-preview-heading"><div><span>Documento</span><strong>Vista previa</strong></div><div className="budget-preview-actions"><button className="ghost-button" type="button" onClick={printDraft}>{invoiceMode ? 'Vista previa PDF' : 'Guardar borrador'}</button><button className="ghost-button budget-confirm-button" type="button" disabled={invoiceEmitting} onClick={documentType === 'budget' ? confirmBudget : emitCommercialInvoice}>{documentType === 'budget' ? 'Confirmar' : invoiceEmitting ? 'Emitiendo…' : 'Emitir en ARCA'}</button>{!invoiceMode && <button className="ghost-button" type="button" disabled={!confirmedBudget} onClick={() => printTransport(confirmedBudget)}>Transporte</button>}<button className="primary-button" type="button" disabled={documentType === 'budget' ? !confirmedBudget : !commercialInvoice} onClick={documentType === 'budget' ? () => printConfirmedBudget(confirmedBudget) : openCommercialInvoicePdf}>PDF / Descargar</button></div></div>
+            <div className="budget-brand-tabs" aria-label={invoiceMode ? 'Marcas de factura' : 'Marcas de presupuesto'}>
+              {brands.map((item) => <button key={item.id} type="button" className={item.id === brand.id ? 'active' : ''} onClick={() => selectBrand(item.id)}><span>{item.name || 'Sin nombre'}</span><small>{invoiceMode ? 'Emisor' : `N.º ${String(item.id === brand.id ? nextNumber : item.nextNumber || 1).padStart(6, '0')}`}</small></button>)}
               <button type="button" className="brand-tab-edit" onClick={editActiveBrand}>Editar</button>
               <button type="button" className="brand-tab-add" onClick={openNewBrand}>＋</button>
             </div>
@@ -1200,7 +1217,7 @@ function Budgets() {
         <div className="print-only-document">
           {printPayload.type === 'transport'
             ? <TransportPreview brand={printPayload.data.brand || brand} client={printPayload.data.client} items={printPayload.data.items || []} number={printPayload.data.number} />
-            : <Preview brand={printPayload.data.brand || brand} client={printPayload.data.client} items={printPayload.data.items || []} number={printPayload.data.number} draft={Boolean(printPayload.data.draft)} />}
+            : <Preview brand={printPayload.data.brand || brand} client={printPayload.data.client} items={printPayload.data.items || []} number={printPayload.data.number} draft={Boolean(printPayload.data.draft)} documentType={printPayload.data.documentType || 'budget'} authorized={false} />}
         </div>
       )}
 

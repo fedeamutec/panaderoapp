@@ -34,6 +34,7 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('panadero-sidebar-collapsed') === '1')
   const [activeSection, setActiveSection] = useState(() => localStorage.getItem('panadero-section') || 'inicio')
+  const [invoiceView, setInvoiceView] = useState('new')
 
   useEffect(() => {
     let cancelled = false
@@ -91,7 +92,9 @@ function App() {
       ) : activeSection === 'presupuestos' ? (
         <Budgets />
       ) : activeSection === 'facturas' ? (
-        <Invoices onNavigateToSales={() => setActiveSection('ventas')} />
+        invoiceView === 'new'
+          ? <Budgets mode="invoice" onShowInvoiceHistory={() => setInvoiceView('history')} />
+          : <Invoices onNavigateToSales={() => setActiveSection('ventas')} onCreateInvoice={() => setInvoiceView('new')} />
       ) : activeSection === 'arca' ? (
         <ArcaSettings />
       ) : activeSection === 'reportes' ? (

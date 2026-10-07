@@ -2226,6 +2226,30 @@ body,
   color:var(--green);
 }
 
+/* Facturación directa: comparte catálogo con Presupuesto, con identidad visual propia */
+.invoice-builder-workspace{
+  --invoice-accent:#6f8cff;
+}
+.invoice-builder-workspace .budget-topbar{
+  background:linear-gradient(105deg,color-mix(in srgb,var(--invoice-accent) 12%,var(--panel)),var(--panel) 52%);
+  box-shadow:inset 0 -2px 0 color-mix(in srgb,var(--invoice-accent) 58%,transparent);
+}
+.invoice-builder-workspace .budget-title-block>span{color:color-mix(in srgb,var(--invoice-accent) 82%,var(--text))}
+.invoice-builder-workspace .budget-view-tabs button.active{
+  border-color:color-mix(in srgb,var(--invoice-accent) 64%,var(--line));
+  background:color-mix(in srgb,var(--invoice-accent) 14%,var(--panel));
+  box-shadow:inset 0 -2px 0 var(--invoice-accent);
+}
+.invoice-builder-workspace .budget-client-card.active,
+.invoice-builder-workspace .budget-brand-tabs>button.active{
+  border-color:color-mix(in srgb,var(--invoice-accent) 60%,var(--line));
+  box-shadow:inset 3px 0 0 var(--invoice-accent);
+}
+.invoice-arca-badge{display:flex;min-width:176px;align-items:center;gap:9px;padding-right:16px;border-right:1px solid var(--line)}
+.invoice-arca-badge span{padding:4px 7px;border:1px solid color-mix(in srgb,var(--invoice-accent) 55%,var(--line));border-radius:5px;color:var(--invoice-accent);font-size:calc(8px * var(--font-scale));font-weight:800;letter-spacing:.08em}
+.invoice-arca-badge strong{font-size:calc(9px * var(--font-scale));white-space:nowrap}
+.registry-new-invoice{white-space:nowrap}
+
 /* Reportes · mapa de clientes */
 .report-map-header { align-items:center; }
 .report-header-actions { display:flex; align-items:center; gap:8px; }

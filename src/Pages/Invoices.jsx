@@ -248,7 +248,7 @@ function buildMonthlyExcelXml(invoices, monthKey) {
 </Workbook>`
 }
 
-function Invoices({ onNavigateToSales }) {
+function Invoices({ onNavigateToSales, onCreateInvoice }) {
   const [account, setAccount] = useState({ connected: false, nickname: '' })
   const [invoices, setInvoices] = useState([])
   const [initialLoading, setInitialLoading] = useState(true)
@@ -471,6 +471,7 @@ function Invoices({ onNavigateToSales }) {
             <p>Facturas autorizadas con CAE desde el punto de venta 0003.</p>
           </div>
           <div className="registry-header-actions">
+            {onCreateInvoice && <button type="button" className="primary-button registry-new-invoice" onClick={onCreateInvoice}>＋ Nueva factura</button>}
             <label className="registry-month-picker">
               <span>Reporte mensual</span>
               <input

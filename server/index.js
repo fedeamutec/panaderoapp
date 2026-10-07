@@ -89,8 +89,8 @@ function commercialInvoiceTotal(items = []) {
 async function resolveFiscalReceiverName({ buyer = {}, requestId }) {
   const identity = documentIdentity(buyer)
   if (identity.documentType !== 'CUIT') return { name: '', source: null, cuit: '' }
-  const suppliedName = String(buyer.fiscalLegalName || buyer.businessName || buyer.business_name || '').trim()
-  if (suppliedName) return { name: suppliedName, source: 'mercadolibre', cuit: identity.documentNumber }
+  const suppliedName = String(buyer.fiscalLegalName || buyer.legalName || buyer.businessName || buyer.business_name || '').trim()
+  if (suppliedName) return { name: suppliedName, source: 'client-record', cuit: identity.documentNumber }
 
   try {
     const result = await getPersonaByCuit(normalizeCuit(identity.documentNumber))
@@ -640,7 +640,7 @@ app.post('/api/arca/commercial-invoice', async (req, res) => {
       accountEmail: req.user.email,
       brand: req.body?.brand || null,
       buyer: {
-        name: client.legalName || client.name || 'Cliente',
+        name: fiscalReceiver.name || client.legalName || client.name || 'Cliente',
         fiscalLegalName: fiscalReceiver.name || null,
         documentType: identity.documentType,
         documentNumber: identity.documentNumber,
