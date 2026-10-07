@@ -71,7 +71,7 @@ function App() {
   }
 
   return (
-    <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`} data-theme={theme} style={{ '--font-scale': fontScale }}>
+    <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`} data-theme={theme} data-section={activeSection} style={{ '--font-scale': fontScale }}>
       <Sidebar
         activeSection={activeSection}
         onSectionChange={setActiveSection}

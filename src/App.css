@@ -2250,6 +2250,61 @@ body,
 .invoice-arca-badge strong{font-size:calc(9px * var(--font-scale));white-space:nowrap}
 .registry-new-invoice{white-space:nowrap}
 
+/* Identidad de cada módulo: degradado superior + línea de color */
+.app-shell{
+  --section-color:#d6b45f;
+}
+.app-shell[data-section="inicio"]{--section-color:#d6b45f}
+.app-shell[data-section="ventas"]{--section-color:#52c98b}
+.app-shell[data-section="presupuestos"]{--section-color:#d9a93f}
+.app-shell[data-section="facturas"]{--section-color:#6f8cff}
+.app-shell[data-section="arca"]{--section-color:#4fa8ce}
+.app-shell[data-section="reportes"]{--section-color:#9677d9}
+
+.app-shell .topbar,
+.app-shell .budget-topbar,
+.app-shell .reports-header{
+  position:relative;
+  background:linear-gradient(105deg,color-mix(in srgb,var(--section-color) 12%,var(--panel)),var(--panel) 52%);
+  border-bottom-color:color-mix(in srgb,var(--section-color) 58%,var(--line));
+  box-shadow:inset 0 -2px 0 color-mix(in srgb,var(--section-color) 58%,transparent);
+}
+.app-shell .topbar::before,
+.app-shell .budget-topbar::before,
+.app-shell .reports-header::before{
+  content:"";
+  position:absolute;
+  top:0;
+  right:0;
+  left:0;
+  height:2px;
+  background:linear-gradient(90deg,var(--section-color),color-mix(in srgb,var(--section-color) 18%,transparent) 72%,transparent);
+  pointer-events:none;
+}
+.app-shell .breadcrumb strong,
+.app-shell .budget-title-block>span,
+.app-shell .reports-header>div>span{
+  color:color-mix(in srgb,var(--section-color) 82%,var(--text));
+}
+.app-shell .dashboard-hero{
+  position:relative;
+  overflow:hidden;
+  background:linear-gradient(112deg,color-mix(in srgb,var(--section-color) 11%,var(--panel)),var(--panel) 60%);
+  border-color:color-mix(in srgb,var(--section-color) 40%,var(--line));
+  box-shadow:inset 0 2px 0 color-mix(in srgb,var(--section-color) 68%,transparent);
+}
+.app-shell .dashboard-hero::before{
+  content:"";
+  position:absolute;
+  top:0;
+  right:0;
+  left:0;
+  height:2px;
+  background:linear-gradient(90deg,var(--section-color),transparent 78%);
+}
+
+.invoice-builder-workspace{--invoice-accent:var(--section-color)}
+
 /* Reportes · mapa de clientes */
 .report-map-header { align-items:center; }
 .report-header-actions { display:flex; align-items:center; gap:8px; }
