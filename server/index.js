@@ -21,6 +21,7 @@ import { getPersonaByCuit, normalizeCuit } from './arca/padron.js'
 import { matchReceiverVatCondition, resolveBillingVatCondition, sanitizeFiscalValue } from './fiscalRules.js'
 import {
   createCreditNote,
+  createDebitNote,
   createSaleInvoice,
   createTestInvoice,
   getLastAuthorizedVoucher,
@@ -918,6 +919,9 @@ app.get('/api/arca/invoices/:invoiceId/credit-note/pdf', async (req, res) => {
     const invoices = await readSaleInvoices()
     const invoice = invoices.find((item) => String(item.id || item.orderId) === invoiceId)
     if (!invoice?.creditNote) return res.status(404).json({ ok: false, error: 'No se encontró la Nota de crédito.' })
+    if (invoice.accountEmail && invoice.accountEmail !== req.user.email) {
+      return res.status(403).json({ ok: false, error: 'La factura pertenece a otra cuenta.' })
+    }
     const pdf = buildInvoicePdf(invoice.creditNote)
     const filename = `Nota-de-credito-${invoice.creditNote.voucher?.formattedNumber || invoiceId}.pdf`
     res.setHeader('Content-Type', 'application/pdf')
@@ -925,6 +929,69 @@ app.get('/api/arca/invoices/:invoiceId/credit-note/pdf', async (req, res) => {
     res.send(pdf)
   } catch (error) {
     console.error('Credit note PDF error:', error)
+    res.status(500).json({ ok: false, error: error.message })
+  }
+})
+
+app.post('/api/arca/invoices/:invoiceId/debit-note', async (req, res) => {
+  try {
+    const invoiceId = String(req.params.invoiceId || '').trim()
+    const invoices = await readSaleInvoices()
+    const index = invoices.findIndex((item) => String(item.id || item.orderId) === invoiceId)
+    if (index === -1) return res.status(404).json({ ok: false, error: 'No se encontró la factura original.' })
+
+    const originalInvoice = invoices[index]
+    if (originalInvoice.accountEmail && originalInvoice.accountEmail !== req.user.email) {
+      return res.status(403).json({ ok: false, error: 'La factura pertenece a otra cuenta.' })
+    }
+    if (originalInvoice.debitNote) {
+      return res.status(409).json({ ok: false, error: 'Esta factura ya tiene una Nota de débito asociada.', debitNote: originalInvoice.debitNote })
+    }
+
+    const result = await createDebitNote({
+      originalInvoice,
+      invoiceId,
+      confirmation: req.body?.confirmation,
+      amount: req.body?.amount,
+    })
+    const debitNote = {
+      id: `debit-note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      source: 'debit-note',
+      originalInvoiceId: originalInvoice.id || originalInvoice.orderId,
+      originalInvoiceNumber: originalInvoice.voucher.formattedNumber,
+      associatedInvoice: originalInvoice,
+      buyer: originalInvoice.buyer,
+      saleSnapshot: originalInvoice.saleSnapshot,
+      receiverVatCondition: originalInvoice.receiverVatCondition,
+      reason: String(req.body?.reason || 'Ajuste de débito').trim(),
+      ...result,
+      issuedAt: new Date().toISOString(),
+    }
+    invoices[index] = { ...originalInvoice, debitNote }
+    await writeSaleInvoices(invoices)
+    res.json({ ok: true, invoice: invoices[index], debitNote })
+  } catch (error) {
+    console.error('ARCA debit note error:', error)
+    res.status(400).json({ ok: false, error: error.message })
+  }
+})
+
+app.get('/api/arca/invoices/:invoiceId/debit-note/pdf', async (req, res) => {
+  try {
+    const invoiceId = String(req.params.invoiceId || '').trim()
+    const invoices = await readSaleInvoices()
+    const invoice = invoices.find((item) => String(item.id || item.orderId) === invoiceId)
+    if (!invoice?.debitNote) return res.status(404).json({ ok: false, error: 'No se encontró la Nota de débito.' })
+    if (invoice.accountEmail && invoice.accountEmail !== req.user.email) {
+      return res.status(403).json({ ok: false, error: 'La factura pertenece a otra cuenta.' })
+    }
+    const pdf = buildInvoicePdf(invoice.debitNote)
+    const filename = `Nota-de-debito-${invoice.debitNote.voucher?.formattedNumber || invoiceId}.pdf`
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`)
+    res.send(pdf)
+  } catch (error) {
+    console.error('Debit note PDF error:', error)
     res.status(500).json({ ok: false, error: error.message })
   }
 })

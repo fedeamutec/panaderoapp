@@ -5,6 +5,7 @@ import {
   associatedVoucherFor,
   buildCreditNoteDetailXml,
   creditNoteTypeFor,
+  debitNoteTypeFor,
   originalInvoiceFiscalData,
 } from './arca/wsfe.js'
 import { normalizeCuit } from './arca/padron.js'
@@ -202,6 +203,10 @@ assert.deepEqual(associatedVoucherFor({ cae: '123', voucher: { voucherType: 1, p
 assert.equal(creditNoteTypeFor(1), 3)
 assert.equal(creditNoteTypeFor(6), 8)
 assert.equal(creditNoteTypeFor(11), 13)
+assert.equal(debitNoteTypeFor(1), 2)
+assert.equal(debitNoteTypeFor(6), 7)
+assert.equal(debitNoteTypeFor(11), 12)
+assert.throws(() => debitNoteTypeFor(99), /tipo válido/)
 
 const facturaA = {
   cae: '123',

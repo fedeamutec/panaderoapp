@@ -258,6 +258,7 @@ function Invoices({ onNavigateToSales, onCreateInvoice }) {
   const [typeFilter, setTypeFilter] = useState('all')
   const [reportMonth, setReportMonth] = useState('')
   const [creditNoteLoading, setCreditNoteLoading] = useState('')
+  const [debitNoteLoading, setDebitNoteLoading] = useState('')
 
   const loadInvoices = useCallback(async ({ refresh = false } = {}) => {
     if (refresh) setRefreshing(true)
@@ -337,6 +338,46 @@ function Invoices({ onNavigateToSales, onCreateInvoice }) {
       setNotice(error.message)
     } finally {
       setCreditNoteLoading('')
+    }
+  }
+
+  const issueDebitNote = async (invoice) => {
+    const invoiceId = String(invoice.id || invoice.orderId || '')
+    if (!invoiceId || !invoice.cae || !invoice.voucher?.voucherType) return
+    const amountInput = window.prompt(
+      `Importe total de la Nota de débito asociada a ${invoice.voucher.formattedNumber || 'la factura'}:`,
+      String(Number(invoice.voucher?.amount || 0).toFixed(2)).replace('.', ','),
+    )
+    if (amountInput === null) return
+    const amount = Number(String(amountInput).trim().replace(/\./g, '').replace(',', '.'))
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setNotice('Ingresá un importe válido para la Nota de débito.')
+      return
+    }
+    const reason = window.prompt('Motivo de la Nota de débito:', 'Ajuste de precio')
+    if (reason === null) return
+    const confirmation = `EMITIR_NOTA_DEBITO_${invoiceId}`
+    const confirmed = window.confirm(
+      `Se emitirá una Nota de débito electrónica por ${formatCurrency(amount)}, asociada a ${invoice.voucher.formattedNumber || 'la factura'} con ARCA. Esta operación fiscal no se puede deshacer.\n\n¿Querés continuar?`,
+    )
+    if (!confirmed) return
+
+    setDebitNoteLoading(invoiceId)
+    setNotice('')
+    try {
+      const payload = await api(`/arca/invoices/${encodeURIComponent(invoiceId)}/debit-note`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmation, amount, reason: reason.trim() }),
+      })
+      setInvoices((current) => current.map((item) => String(item.id || item.orderId) === invoiceId
+        ? { ...item, debitNote: payload.debitNote }
+        : item))
+      setNotice(`Nota de débito autorizada: ${payload.debitNote?.voucher?.formattedNumber || 'comprobante autorizado'}.`)
+    } catch (error) {
+      setNotice(error.message)
+    } finally {
+      setDebitNoteLoading('')
     }
   }
 
@@ -588,7 +629,7 @@ function Invoices({ onNavigateToSales, onCreateInvoice }) {
                   <th scope="col">IVA %</th>
                   <th scope="col">Importe IVA</th>
                   <th scope="col">Total</th>
-                  <th scope="col">Documento</th>
+                  <th scope="col">PDF / Notas ARCA</th>
                 </tr>
               </thead>
               <tbody>
@@ -650,6 +691,29 @@ function Invoices({ onNavigateToSales, onCreateInvoice }) {
                               title="Emitir Nota de crédito electrónica"
                             >
                               {creditNoteLoading === String(row.invoice.id || row.invoice.orderId) ? '…' : 'NC'}
+                            </button>
+                          )
+                        )}
+                        {row.invoice.cae && row.invoice.voucher?.voucherType && (
+                          row.invoice.debitNote ? (
+                            <a
+                              className="registry-action-link"
+                              href={`${API_BASE}/arca/invoices/${encodeURIComponent(String(row.invoice.id || row.invoice.orderId))}/debit-note/pdf`}
+                              target="_blank"
+                              rel="noreferrer"
+                              title="Ver Nota de débito electrónica"
+                            >
+                              ND
+                            </a>
+                          ) : (
+                            <button
+                              type="button"
+                              className="registry-action-link"
+                              onClick={() => issueDebitNote(row.invoice)}
+                              disabled={debitNoteLoading === String(row.invoice.id || row.invoice.orderId)}
+                              title="Emitir Nota de débito electrónica"
+                            >
+                              {debitNoteLoading === String(row.invoice.id || row.invoice.orderId) ? '…' : 'ND'}
                             </button>
                           )
                         )}

@@ -347,6 +347,7 @@ export function buildInvoicePdf(invoice) {
     const associated = invoice.associatedInvoice.voucher
     row('Comprobante asociado', `${associated.voucherTypeDescription || 'Factura'} ${associated.formattedNumber || '—'}`)
   }
+  if (invoice.reason) row('Motivo', invoice.reason)
 
   if (snapshot.address) {
     const address = [snapshot.address.addressLine, snapshot.address.city, snapshot.address.state]

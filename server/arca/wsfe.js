@@ -362,13 +362,20 @@ function resolveVoucherType({ requestedType, documentType, documentNumber }) {
 }
 
 function voucherDescription(voucherType) {
-  return { 1: 'Factura A', 6: 'Factura B', 11: 'Factura C', 3: 'Nota de crédito A', 8: 'Nota de crédito B', 13: 'Nota de crédito C' }[voucherType] || 'Comprobante'
+  return { 1: 'Factura A', 2: 'Nota de débito A', 3: 'Nota de crédito A', 6: 'Factura B', 7: 'Nota de débito B', 8: 'Nota de crédito B', 11: 'Factura C', 12: 'Nota de débito C', 13: 'Nota de crédito C' }[voucherType] || 'Comprobante'
 }
 
 export function creditNoteTypeFor(invoiceType) {
   const mapping = { 1: 3, 6: 8, 11: 13 }
   const result = mapping[Number(invoiceType)]
   if (!result) throw new Error('La factura original no tiene un tipo válido para emitir Nota de crédito.')
+  return result
+}
+
+export function debitNoteTypeFor(invoiceType) {
+  const mapping = { 1: 2, 6: 7, 11: 12 }
+  const result = mapping[Number(invoiceType)]
+  if (!result) throw new Error('La factura original no tiene un tipo válido para emitir Nota de débito.')
   return result
 }
 
@@ -612,6 +619,56 @@ export async function createCreditNote({ originalInvoice, invoiceId, confirmatio
   if (result !== 'A' || !cae) {
     const detail = observations.map((item) => `${item.code}: ${item.message}`).join(' | ')
     throw new Error(detail ? `ARCA no autorizó la Nota de crédito: ${detail}` : `ARCA no autorizó la Nota de crédito. Resultado: ${result || 'sin informar'}.`)
+  }
+  return {
+    ok: true, environment: ARCA_ENV, authorized: true,
+    voucher: { pointOfSale, voucherType, voucherTypeDescription: voucherDescription(voucherType), voucherNumber, formattedNumber: `${String(pointOfSale).padStart(4, '0')}-${String(voucherNumber).padStart(8, '0')}`, date: voucherDate, amount: total, netAmount, vatAmount, vatRate, currency: originalVoucher.currency || 'PES', documentType: fiscalData.documentType, documentNumber: fiscalData.documentNumber, recipientVatConditionId: fiscalData.conditionId },
+    cae, caeExpirationDate: extractTag(detailBlock, 'CAEFchVto'), processedAt: extractTag(headerBlock, 'FchProceso') || null, result, observations, events,
+  }
+}
+
+export async function createDebitNote({ originalInvoice, invoiceId, confirmation, amount }) {
+  const confirmationId = String(invoiceId || originalInvoice?.id || originalInvoice?.orderId || '').trim()
+  if (confirmation !== `EMITIR_NOTA_DEBITO_${confirmationId}`) {
+    throw new Error('Falta la confirmación de seguridad para emitir la Nota de débito.')
+  }
+  const associated = associatedVoucherFor(originalInvoice)
+  const voucherType = debitNoteTypeFor(associated.type)
+  const originalVoucher = originalInvoice.voucher
+  const fiscalData = originalInvoiceFiscalData(originalInvoice)
+  const pointOfSale = Number(originalVoucher.pointOfSale)
+  const total = normalizeMoney(amount, 'El importe de la Nota de débito')
+  const vatRate = Number(originalVoucher.vatRate || 0)
+  const breakdown = vatRate
+    ? calculateVatBreakdown(total, vatRate)
+    : { netAmount: total, vatAmount: 0, vatId: null }
+  const { netAmount, vatAmount, vatId } = breakdown
+  const lastVoucher = await getLastAuthorizedVoucher({ pointOfSale, voucherType })
+  const voucherNumber = lastVoucher.nextVoucherNumber
+  const voucherDate = formatArcaDate()
+  const exchangeRate = Number(originalVoucher.exchangeRate || 1)
+  const detailXml = buildCreditNoteDetailXml({
+    voucherNumber,
+    voucherDate,
+    total,
+    netAmount,
+    vatAmount,
+    vatId,
+    currency: originalVoucher.currency || 'PES',
+    exchangeRate,
+    fiscalData,
+    associated,
+  })
+  const { xml, events } = await callWsfe('FECAESolicitar', (ticket) => `${buildAuth(ticket)}
+<FeCAEReq><FeCabReq><CantReg>1</CantReg><PtoVta>${pointOfSale}</PtoVta><CbteTipo>${voucherType}</CbteTipo></FeCabReq><FeDetReq><FECAEDetRequest>${detailXml}</FECAEDetRequest></FeDetReq></FeCAEReq>`)
+  const headerBlock = extractTag(xml, 'FeCabResp') || ''
+  const detailBlock = extractBlocks(xml, 'FECAEDetResponse')[0] || ''
+  const observations = extractMessages(detailBlock, 'Observaciones', 'Obs')
+  const result = extractTag(detailBlock, 'Resultado') || extractTag(headerBlock, 'Resultado')
+  const cae = extractTag(detailBlock, 'CAE')
+  if (result !== 'A' || !cae) {
+    const detail = observations.map((item) => `${item.code}: ${item.message}`).join(' | ')
+    throw new Error(detail ? `ARCA no autorizó la Nota de débito: ${detail}` : `ARCA no autorizó la Nota de débito. Resultado: ${result || 'sin informar'}.`)
   }
   return {
     ok: true, environment: ARCA_ENV, authorized: true,
