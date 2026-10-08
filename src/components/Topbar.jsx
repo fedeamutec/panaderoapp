@@ -11,7 +11,7 @@ function Topbar({ account, loading, onSync, onConnect, onDisconnect, section = '
           <span>/</span>
           <strong>{isArca ? 'ARCA' : isInvoices ? 'Facturas' : 'Ventas'}</strong>
         </div>
-        <h1>{isArca ? 'Configuración fiscal' : isInvoices ? 'Registro de facturación' : 'Ventas'}</h1>
+        <h1>{isArca ? 'Configuración fiscal' : isInvoices ? 'Registro de facturación' : 'Mercado Libre / Ventas'}</h1>
       </div>
 
       {!isArca && <div className="topbar-actions">
