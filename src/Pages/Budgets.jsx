@@ -1034,7 +1034,7 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
               <>
                 <button type="button" className={documentType === 'invoice-a' ? 'active' : ''} onClick={() => setDocumentType('invoice-a')}>Factura A</button>
                 <button type="button" className={documentType === 'invoice-b' ? 'active' : ''} onClick={() => setDocumentType('invoice-b')}>Factura B</button>
-                <button type="button" onClick={onShowInvoiceHistory}>Comprobantes emitidos</button>
+                <button type="button" onClick={onShowInvoiceHistory}>Comprobantes y notas</button>
               </>
             ) : (
               <>

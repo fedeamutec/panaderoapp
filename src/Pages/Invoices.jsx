@@ -508,7 +508,7 @@ function Invoices({ onNavigateToSales, onCreateInvoice }) {
         <div className="registry-header">
           <div>
             <span className="detail-kicker">ARCA Producción</span>
-            <h2 id="registry-title">Comprobantes emitidos</h2>
+            <h2 id="registry-title">Comprobantes y notas</h2>
             <p>Facturas autorizadas con CAE desde el punto de venta 0003.</p>
           </div>
           <div className="registry-header-actions">
@@ -680,7 +680,7 @@ function Invoices({ onNavigateToSales, onCreateInvoice }) {
                               target="_blank"
                               rel="noreferrer"
                             >
-                              NC
+                              Nota crédito
                             </a>
                           ) : (
                             <button
@@ -690,7 +690,7 @@ function Invoices({ onNavigateToSales, onCreateInvoice }) {
                               disabled={creditNoteLoading === String(row.invoice.id || row.invoice.orderId)}
                               title="Emitir Nota de crédito electrónica"
                             >
-                              {creditNoteLoading === String(row.invoice.id || row.invoice.orderId) ? '…' : 'NC'}
+                              {creditNoteLoading === String(row.invoice.id || row.invoice.orderId) ? 'Emitiendo…' : 'Nota crédito'}
                             </button>
                           )
                         )}
@@ -703,7 +703,7 @@ function Invoices({ onNavigateToSales, onCreateInvoice }) {
                               rel="noreferrer"
                               title="Ver Nota de débito electrónica"
                             >
-                              ND
+                              Nota débito
                             </a>
                           ) : (
                             <button
@@ -713,7 +713,7 @@ function Invoices({ onNavigateToSales, onCreateInvoice }) {
                               disabled={debitNoteLoading === String(row.invoice.id || row.invoice.orderId)}
                               title="Emitir Nota de débito electrónica"
                             >
-                              {debitNoteLoading === String(row.invoice.id || row.invoice.orderId) ? '…' : 'ND'}
+                              {debitNoteLoading === String(row.invoice.id || row.invoice.orderId) ? 'Emitiendo…' : 'Nota débito'}
                             </button>
                           )
                         )}

@@ -1307,7 +1307,7 @@ body,
 .invoice-sequence strong { margin-top: 5px; font-size: calc(11px * var(--font-scale)); }
 .invoice-modal-warning.production { border-color: rgba(223,119,119,.35); background: rgba(223,119,119,.08); }
 .invoice-modal-warning.production strong { color: var(--red); }
-.registry-actions { display: flex; gap: 6px; }
+.registry-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .registry-action-link {
   display: inline-flex;
   height: 28px;
@@ -1665,14 +1665,14 @@ body,
   border: 1px solid transparent;
 }
 .sidebar-item-facturas {
-  border-color: color-mix(in srgb, var(--red) 38%, transparent);
-  background: color-mix(in srgb, var(--red) 4%, transparent);
+  border-color: color-mix(in srgb, #6f8cff 38%, transparent);
+  background: color-mix(in srgb, #6f8cff 4%, transparent);
 }
 .sidebar-item-facturas:hover,
 .sidebar-item-facturas.active {
-  border-color: color-mix(in srgb, var(--red) 68%, var(--line));
-  background: color-mix(in srgb, var(--red) 10%, var(--panel));
-  box-shadow: inset 2px 0 0 var(--red);
+  border-color: color-mix(in srgb, #6f8cff 68%, var(--line));
+  background: color-mix(in srgb, #6f8cff 10%, var(--panel));
+  box-shadow: inset 2px 0 0 #6f8cff;
 }
 .sidebar-item-reportes { border-color: color-mix(in srgb, #a88cff 34%, transparent); }
 .sidebar-item-reportes:hover,
