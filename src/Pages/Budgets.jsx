@@ -1128,6 +1128,9 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
                 <button className="danger-ghost-button" type="button" disabled={!selectedClient} onClick={deleteClient}>Eliminar</button>
                 <button className="ghost-button" type="button" disabled={!hasClientChanges} onClick={() => setClientDraft(selectedClient ? { ...selectedClient } : null)}>Deshacer</button>
                 <button className="primary-button" type="button" disabled={!hasClientChanges} onClick={saveClient}>Guardar cliente</button>
+                {invoiceMode && <span className="invoice-editor-action-divider" aria-hidden="true" />}
+                {invoiceMode && <button className="ghost-button" type="button" onClick={printDraft}>Vista previa PDF</button>}
+                {invoiceMode && <button className="ghost-button budget-confirm-button" type="button" disabled={invoiceEmitting} onClick={emitCommercialInvoice}>{invoiceEmitting ? 'Emitiendo…' : 'Emitir en ARCA'}</button>}
               </div>
             </div>
 
@@ -1172,7 +1175,7 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
           </section>
 
           <section className="budget-preview-column">
-            <div className="budget-column-heading budget-preview-heading"><div><span>Documento</span><strong>Vista previa</strong></div><div className="budget-preview-actions"><button className="ghost-button" type="button" onClick={printDraft}>{invoiceMode ? 'Vista previa PDF' : 'Guardar borrador'}</button><button className="ghost-button budget-confirm-button" type="button" disabled={invoiceEmitting} onClick={documentType === 'budget' ? confirmBudget : emitCommercialInvoice}>{documentType === 'budget' ? 'Confirmar' : invoiceEmitting ? 'Emitiendo…' : 'Emitir en ARCA'}</button>{!invoiceMode && <button className="ghost-button" type="button" disabled={!confirmedBudget} onClick={() => printTransport(confirmedBudget)}>Transporte</button>}<button className="primary-button" type="button" disabled={documentType === 'budget' ? !confirmedBudget : !commercialInvoice} onClick={documentType === 'budget' ? () => printConfirmedBudget(confirmedBudget) : openCommercialInvoicePdf}>PDF / Descargar</button></div></div>
+            <div className="budget-column-heading budget-preview-heading"><div><span>Documento</span><strong>Vista previa</strong></div><div className="budget-preview-actions">{!invoiceMode && <button className="ghost-button" type="button" onClick={printDraft}>Guardar borrador</button>}{!invoiceMode && <button className="ghost-button budget-confirm-button" type="button" onClick={confirmBudget}>Confirmar</button>}{!invoiceMode && <button className="ghost-button" type="button" disabled={!confirmedBudget} onClick={() => printTransport(confirmedBudget)}>Transporte</button>}<button className="primary-button" type="button" disabled={documentType === 'budget' ? !confirmedBudget : !commercialInvoice} onClick={documentType === 'budget' ? () => printConfirmedBudget(confirmedBudget) : openCommercialInvoicePdf}>PDF / Descargar</button></div></div>
             <div className="budget-brand-tabs" aria-label={invoiceMode ? 'Marcas de factura' : 'Marcas de presupuesto'}>
               {brands.map((item) => <button key={item.id} type="button" className={item.id === brand.id ? 'active' : ''} onClick={() => selectBrand(item.id)}><span>{item.name || 'Sin nombre'}</span><small>{invoiceMode ? 'Emisor' : `N.º ${String(item.id === brand.id ? nextNumber : item.nextNumber || 1).padStart(6, '0')}`}</small></button>)}
               <button type="button" className="brand-tab-edit" onClick={editActiveBrand}>Editar</button>
