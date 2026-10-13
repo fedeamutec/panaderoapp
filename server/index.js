@@ -591,6 +591,8 @@ app.post('/api/arca/commercial-invoice', async (req, res) => {
 
     const items = commercialInvoiceItems(req.body?.items)
     if (!items.length) throw new Error('Agregá al menos un producto antes de emitir.')
+    const itemVatRates = [...new Set(items.map((item) => Number(item.vatRate || 21)))]
+    if (itemVatRates.length > 1) throw new Error('Todos los productos de una misma factura deben usar la misma alícuota de IVA.')
     const amount = commercialInvoiceTotal(items)
     if (!Number.isFinite(amount) || amount <= 0) throw new Error('El total de la factura no es válido.')
     const fiscalReceiver = await resolveFiscalReceiverName({ buyer: client, requestId })
@@ -627,7 +629,7 @@ app.post('/api/arca/commercial-invoice', async (req, res) => {
       pointOfSale: ARCA_POINT_OF_SALE,
       amount,
       requestedType: invoiceType,
-      vatRate: req.body?.vatRate,
+      vatRate: itemVatRates[0] || Number(req.body?.vatRate) || 21,
       documentType: identity.documentType,
       documentNumber: identity.documentNumber,
       recipientVatConditionId: vatCondition.id,
