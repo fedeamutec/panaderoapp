@@ -1501,6 +1501,7 @@ body,
 .budget-paper-client > strong { display:block; margin:3px 0; font-size:13px; }
 .budget-paper-table { margin-top:24px; }
 .budget-paper-row { display:grid; grid-template-columns:.6fr 2fr .85fr .55fr .85fr .45fr .9fr; gap:8px; padding:10px 6px; border-bottom:1px solid #e6e6e6; font-size:8px; }
+.budget-paper-row.invoice { grid-template-columns:.55fr 1.55fr .78fr .48fr .42fr .82fr .38fr .82fr; }
 .budget-paper-row.heading { color:#666; background:#f4f4f4; border-bottom:1px solid #bbb; font-size:7px; font-weight:800; text-transform:uppercase; }
 .budget-paper-row span:nth-child(n+3) { text-align:right; }
 .budget-paper-empty { padding:50px 12px; color:#999; border-bottom:1px solid #ddd; font-size:10px; text-align:center; }

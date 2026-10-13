@@ -368,6 +368,7 @@ export function buildInvoicePdf(invoice) {
       })
       if (unitPrice > 0) {
         text(money(unitPrice * quantity), 430, 9, true)
+        text(`Neto unitario ${money(item.netUnitPrice || unitPrice)} · IVA ${Number(item.vatRate || voucher.vatRate || 21)}% · Unitario con IVA ${money(unitPrice)}`, 48, 7)
         y += 15
       }
     })

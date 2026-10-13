@@ -124,7 +124,7 @@ function numberValue(value, fallback = 0) {
 function calculateProductPricing(product, { fxSale = 0, profit = 0, discountFactor = 1 } = {}) {
   const currency = product.currency === 'USD' ? 'USD' : 'ARS'
   const basePrice = numberValue(product.basePrice ?? product.price)
-  const vatRate = numberValue(product.vatRate, currency === 'USD' ? 21 : 0)
+  const vatRate = numberValue(product.vatRate, 21)
   const profitRate = numberValue(product.profitRate, profit)
   const convertedPrice = currency === 'USD' ? basePrice * numberValue(fxSale) : basePrice
   const priceWithVat = convertedPrice * (1 + vatRate / 100)
@@ -139,6 +139,7 @@ function budgetTotal(items) {
 
 function Preview({ brand, client, items, number, draft = false, documentType = 'budget', authorized = false }) {
   const total = items.reduce((sum, item) => sum + item.subtotal, 0)
+  const isInvoice = documentType === 'invoice-a' || documentType === 'invoice-b'
   const documentLabel = documentType === 'invoice-a' ? 'FACTURA A' : documentType === 'invoice-b' ? 'FACTURA B' : 'PRESUPUESTO'
   const subtitle = documentType === 'budget' ? (brand.subtitle || 'Presupuesto comercial') : authorized ? 'Comprobante electrónico autorizado por ARCA' : 'Vista previa · emisión ARCA pendiente'
   return (
@@ -155,21 +156,35 @@ function Preview({ brand, client, items, number, draft = false, documentType = '
         <span>CLIENTE</span>
         <strong>{client?.legalName || 'Seleccioná un cliente'}</strong>
         <div>{client?.cuit ? `CUIT/DNI ${client.cuit}` : 'CUIT/DNI —'}</div>
+        {isInvoice && <div>Condición IVA: {client?.taxCondition || 'Sin informar'}</div>}
         <div>{[client?.address, client?.locality].filter(Boolean).join(', ') || 'Dirección —'}</div>
       </section>
 
       <div className="budget-paper-table">
-        <div className="budget-paper-row heading"><span>Código</span><span>Producto</span><span>Precio</span><span>Desc.</span><span>Precio neto</span><span>Cant.</span><span>Subtotal</span></div>
+        <div className={`budget-paper-row heading ${isInvoice ? 'invoice' : ''}`}>
+          {isInvoice
+            ? <><span>Código</span><span>Producto</span><span>Neto s/IVA</span><span>Desc.</span><span>IVA</span><span>Precio c/IVA</span><span>Cant.</span><span>Subtotal</span></>
+            : <><span>Código</span><span>Producto</span><span>Precio</span><span>Desc.</span><span>Precio neto</span><span>Cant.</span><span>Subtotal</span></>}
+        </div>
         {items.length ? items.map((item) => (
-          <div className="budget-paper-row" key={item.rowId}>
-            <span>{item.code}</span><span>{item.name}</span><span>{formatCurrency(item.price)}</span><span>{item.discountLabel}</span><span>{formatCurrency(item.discountedPrice)}</span><span>{item.quantity}</span><span>{formatCurrency(item.subtotal)}</span>
+          <div className={`budget-paper-row ${isInvoice ? 'invoice' : ''}`} key={item.rowId}>
+            {isInvoice ? (
+              <>
+                <span>{item.code}</span><span>{item.name}</span>
+                <span>{formatCurrency(Number(item.discountedPrice || 0) / (1 + numberValue(item.vatRate, 21) / 100))}</span>
+                <span>{item.discountLabel}</span><span>{numberValue(item.vatRate, 21)}%</span>
+                <span>{formatCurrency(item.discountedPrice)}</span><span>{item.quantity}</span><span>{formatCurrency(item.subtotal)}</span>
+              </>
+            ) : (
+              <><span>{item.code}</span><span>{item.name}</span><span>{formatCurrency(item.price)}</span><span>{item.discountLabel}</span><span>{formatCurrency(item.discountedPrice)}</span><span>{item.quantity}</span><span>{formatCurrency(item.subtotal)}</span></>
+            )}
           </div>
         )) : <div className="budget-paper-empty">Agregá productos para comenzar el presupuesto.</div>}
       </div>
 
       <footer className="budget-paper-footer">
         <div><span>Validez</span><strong>{brand.validity || '10 días'}</strong><small>{brand.conditions || 'Precios sujetos a disponibilidad.'}</small></div>
-        <div className="budget-paper-total"><span>TOTAL</span><strong>{formatCurrency(total)}</strong><small>Importe final sin desglose de IVA</small></div>
+        <div className="budget-paper-total"><span>TOTAL</span><strong>{formatCurrency(total)}</strong><small>{isInvoice ? 'Importe final con IVA incluido' : 'Importe final sin desglose de IVA'}</small></div>
       </footer>
     </div>
   )
@@ -658,6 +673,7 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
           requestId,
           confirmation: `EMITIR_FACTURA_${invoiceType}_${requestId}`,
           invoiceType,
+          vatRate: 21,
           client,
           items,
           brand,

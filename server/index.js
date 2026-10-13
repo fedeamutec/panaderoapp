@@ -74,13 +74,19 @@ function documentIdentity(client = {}) {
 }
 
 function commercialInvoiceItems(items = []) {
-  return (Array.isArray(items) ? items : []).map((item) => ({
-    code: String(item.code || ''),
-    title: String(item.name || item.title || 'Producto'),
-    quantity: Math.max(1, Number(item.quantity) || 1),
-    unitPrice: Number(item.discountedPrice ?? item.unitPrice ?? item.price ?? 0),
-    subtotal: Number(item.subtotal || 0),
-  }))
+  return (Array.isArray(items) ? items : []).map((item) => {
+    const vatRate = Number.isFinite(Number(item.vatRate)) ? Number(item.vatRate) : 21
+    const unitPrice = Number(item.discountedPrice ?? item.unitPrice ?? item.price ?? 0)
+    return {
+      code: String(item.code || ''),
+      title: String(item.name || item.title || 'Producto'),
+      quantity: Math.max(1, Number(item.quantity) || 1),
+      vatRate,
+      netUnitPrice: Math.round((unitPrice / (1 + vatRate / 100) + Number.EPSILON) * 100) / 100,
+      unitPrice,
+      subtotal: Number(item.subtotal || 0),
+    }
+  })
 }
 
 function commercialInvoiceTotal(items = []) {
