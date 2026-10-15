@@ -4,6 +4,7 @@ import { matchReceiverVatCondition, resolveBillingVatCondition, sanitizeFiscalVa
 import {
   associatedVoucherFor,
   buildCreditNoteDetailXml,
+  calculateVatBreakdown,
   creditNoteTypeFor,
   debitNoteTypeFor,
   originalInvoiceFiscalData,
@@ -207,6 +208,20 @@ assert.equal(debitNoteTypeFor(1), 2)
 assert.equal(debitNoteTypeFor(6), 7)
 assert.equal(debitNoteTypeFor(11), 12)
 assert.throws(() => debitNoteTypeFor(99), /tipo válido/)
+
+assert.deepEqual(calculateVatBreakdown(121, 21), {
+  rate: 21,
+  vatId: 5,
+  netAmount: 100,
+  vatAmount: 21,
+})
+assert.deepEqual(calculateVatBreakdown(110.5, 10.5), {
+  rate: 10.5,
+  vatId: 4,
+  netAmount: 100,
+  vatAmount: 10.5,
+})
+assert.throws(() => calculateVatBreakdown(121, 15), /no está configurada/)
 
 const facturaA = {
   cae: '123',

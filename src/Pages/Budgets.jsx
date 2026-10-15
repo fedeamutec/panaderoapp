@@ -142,6 +142,17 @@ function budgetTotal(items) {
 function Preview({ brand, client, items, number, draft = false, documentType = 'budget', authorized = false }) {
   const total = items.reduce((sum, item) => sum + item.subtotal, 0)
   const isInvoice = documentType === 'invoice-a' || documentType === 'invoice-b'
+  const invoiceTaxRows = isInvoice ? Object.values(items.reduce((groups, item) => {
+    const rate = numberValue(item.vatRate, 21)
+    const gross = numberValue(item.discountedPrice) * Math.max(1, numberValue(item.quantity, 1))
+    const net = gross / (1 + rate / 100)
+    const key = String(rate)
+    if (!groups[key]) groups[key] = { rate, net: 0, vat: 0 }
+    groups[key].net += net
+    groups[key].vat += gross - net
+    return groups
+  }, {})) : []
+  const invoiceNetTotal = invoiceTaxRows.reduce((sum, row) => sum + row.net, 0)
   const documentLabel = documentType === 'invoice-a' ? 'FACTURA A' : documentType === 'invoice-b' ? 'FACTURA B' : 'PRESUPUESTO'
   const subtitle = documentType === 'budget' ? (brand.subtitle || 'Presupuesto comercial') : authorized ? 'Comprobante electrónico autorizado por ARCA' : 'Vista previa · emisión ARCA pendiente'
   return (
@@ -186,7 +197,14 @@ function Preview({ brand, client, items, number, draft = false, documentType = '
 
       <footer className="budget-paper-footer">
         <div><span>Validez</span><strong>{brand.validity || '10 días'}</strong><small>{brand.conditions || 'Precios sujetos a disponibilidad.'}</small></div>
-        <div className="budget-paper-total"><span>TOTAL</span><strong>{formatCurrency(total)}</strong><small>{isInvoice ? 'Importe final con IVA incluido' : 'Presupuesto sin IVA'}</small></div>
+        {isInvoice ? (
+          <div className="budget-paper-total invoice-tax-total">
+            <div><span>NETO GRAVADO</span><b>{formatCurrency(invoiceNetTotal)}</b></div>
+            {invoiceTaxRows.map((row) => <div key={row.rate}><span>IVA {String(row.rate).replace('.', ',')}%</span><b>{formatCurrency(row.vat)}</b></div>)}
+            <div className="invoice-grand-total"><span>TOTAL</span><strong>{formatCurrency(total)}</strong></div>
+            <small>Importe final con IVA incluido</small>
+          </div>
+        ) : <div className="budget-paper-total"><span>TOTAL</span><strong>{formatCurrency(total)}</strong><small>Presupuesto sin IVA</small></div>}
       </footer>
     </div>
   )
@@ -1132,6 +1150,7 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
             </div></>}
           </aside>
 
+          <div className="budget-document-stack">
           <section className="budget-editor-column">
             <div className="budget-column-heading budget-editor-heading">
               <div><span>Armado</span><strong>Datos y productos</strong></div>
@@ -1237,6 +1256,7 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
             )}
             <div className="budget-preview-scroll"><Preview brand={brand} client={clientDraft || selectedClient} items={items} number={documentType === 'budget' ? (confirmedBudget?.number || nextNumber) : (commercialInvoice?.voucher?.formattedNumber || invoiceSequence?.formattedNextNumber || '—')} documentType={documentType} authorized={Boolean(commercialInvoice)} /></div>
           </section>
+          </div>
         </div>
       ) : (
         <div className="generated-budget-layout">

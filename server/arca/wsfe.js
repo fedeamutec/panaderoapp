@@ -395,7 +395,7 @@ function recipientVatConditionIdFor({ voucherType }) {
   return voucherType === 1 ? 1 : 5
 }
 
-function calculateVatBreakdown(grossAmount, requestedRate = ARCA_VAT_RATE) {
+export function calculateVatBreakdown(grossAmount, requestedRate = ARCA_VAT_RATE) {
   const rate = Number(requestedRate)
 
   if (!Number.isFinite(rate) || rate <= 0) {
