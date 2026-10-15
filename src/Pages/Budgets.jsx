@@ -3,6 +3,7 @@ import { formatCurrency } from '../components/SalesTable'
 import defaultClients from '../Data/BudgetClients.json'
 import defaultProducts from '../Data/BudgetProducts.json'
 import successSoundUrl from '../assets/panadero-success.wav'
+import { clearPendingRestore, hasPendingRestore } from '../utils/localBackup'
 
 const CLIENTS_KEY = 'panadero-budget-clients'
 const PRODUCTS_KEY = 'panadero-budget-products'
@@ -12,6 +13,11 @@ const MANUAL_PRODUCTS_KEY = 'panadero-budget-manual-products'
 const FX_KEY = 'panadero-budget-bna-fx'
 const DEFAULT_PROFIT_KEY = 'panadero-budget-default-profit'
 const CATALOG_OWNER_KEY = 'panadero-budget-catalog-owner'
+const BRANDS_KEY = 'panadero-budget-brands'
+const ACTIVE_BRAND_KEY = 'panadero-budget-active-brand'
+const PENDING_BUDGETS_KEY = 'panadero-pending-budgets'
+const DEVICE_ID_KEY = 'panadero-device-id'
+const BRANDS_DIRTY_KEY = 'panadero-budget-brands-pending-sync'
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3001/api' : 'https://api.panaderoapp.com/api'
 
 const DEFAULT_BRAND = { id: 'brand-1', name: '', subtitle: '', validity: '10 días', conditions: '', logo: '', nextNumber: 1 }
@@ -37,6 +43,82 @@ function readStored(key, fallback) {
   } catch {
     return fallback
   }
+}
+
+function deviceId() {
+  const stored = localStorage.getItem(DEVICE_ID_KEY)
+  if (stored) return stored
+  const id = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+  localStorage.setItem(DEVICE_ID_KEY, id)
+  return id
+}
+
+function budgetBrandId(budget, fallback = 'brand-1') {
+  return String(budget?.brand?.id || budget?.brandId || fallback)
+}
+
+function mergeBudgets(serverBudgets = [], localBudgets = []) {
+  const merged = new Map()
+  serverBudgets.forEach((budget) => merged.set(budget.id, budget))
+  localBudgets.forEach((budget) => merged.set(budget.id, budget))
+  return [...merged.values()].sort((left, right) => new Date(right.createdAt || 0) - new Date(left.createdAt || 0))
+}
+
+function cachedBrands() {
+  const legacy = normalizeBrandRecord(readStored(BRAND_KEY, DEFAULT_BRAND), 'brand-1')
+  const records = readStored(BRANDS_KEY, [legacy])
+  return Array.isArray(records) && records.length
+    ? records.map((item, index) => normalizeBrandRecord(item, `brand-${index + 1}`))
+    : [legacy]
+}
+
+function notifyLocalDataChanged() {
+  window.dispatchEvent(new CustomEvent('panadero:data-changed'))
+}
+
+async function syncPendingBudgetQueue(queue = []) {
+  const remaining = []
+  let latestState = null
+  let syncedCount = 0
+  let connectionFailed = false
+
+  for (let index = 0; index < queue.length; index += 1) {
+    const budget = queue[index]
+    if (connectionFailed) {
+      remaining.push(budget)
+      continue
+    }
+
+    try {
+      const outbound = { ...budget }
+      delete outbound.syncStatus
+      delete outbound.syncError
+      delete outbound.savedLocallyAt
+      const response = await fetch(`${API_BASE}/budgets/confirm`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ number: Number(budget.number), brandId: budgetBrandId(budget), budget: outbound }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        remaining.push({
+          ...budget,
+          syncStatus: response.status === 409 ? 'conflict' : 'pending',
+          syncError: data.error || 'No se pudo sincronizar este presupuesto.',
+        })
+        if (response.status !== 409) connectionFailed = true
+        continue
+      }
+      latestState = data
+      syncedCount += 1
+    } catch (error) {
+      remaining.push({ ...budget, syncStatus: 'pending', syncError: error.message })
+      connectionFailed = true
+    }
+  }
+
+  return { remaining, latestState, syncedCount }
 }
 
 function normalize(value) {
@@ -249,7 +331,7 @@ function TransportPreview({ brand, client, items, number }) {
   )
 }
 
-function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
+function Budgets({ mode = 'budget', onShowInvoiceHistory, online = true }) {
   const invoiceMode = mode === 'invoice'
   const [clients, setClients] = useState(() => readStored(CLIENTS_KEY, defaultClients))
   const [products, setProducts] = useState(() => readStored(PRODUCTS_KEY, defaultProducts))
@@ -259,9 +341,12 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
   const [defaultProfit, setDefaultProfit] = useState(() => numberValue(localStorage.getItem(DEFAULT_PROFIT_KEY), 30))
   const [fx, setFx] = useState(() => readStored(FX_KEY, { buy: 0, sell: 0, date: '', time: '', source: 'BNA', manual: false }))
   const [fxLoading, setFxLoading] = useState(false)
-  const legacyBrand = readStored(BRAND_KEY, DEFAULT_BRAND)
-  const [brands, setBrands] = useState(() => [normalizeBrandRecord(legacyBrand, 'brand-1')])
-  const [activeBrandId, setActiveBrandId] = useState('brand-1')
+  const [brands, setBrands] = useState(cachedBrands)
+  const [activeBrandId, setActiveBrandId] = useState(() => {
+    const records = cachedBrands()
+    const requested = localStorage.getItem(ACTIVE_BRAND_KEY)
+    return records.some((item) => item.id === requested) ? requested : records[0]?.id || 'brand-1'
+  })
   const [brandDraft, setBrandDraft] = useState(null)
   const [selectedClientId, setSelectedClientId] = useState(() => readStored(CLIENTS_KEY, defaultClients)[0]?.id || '')
   const [clientQuery, setClientQuery] = useState('')
@@ -274,7 +359,12 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
   const [invoiceSequenceLoading, setInvoiceSequenceLoading] = useState(false)
   const [invoiceEmitting, setInvoiceEmitting] = useState(false)
   const [generatedBudgets, setGeneratedBudgets] = useState(() => readStored(BUDGETS_KEY, []))
-  const [nextNumber, setNextNumber] = useState(1)
+  const [nextNumber, setNextNumber] = useState(() => {
+    const records = cachedBrands()
+    const requested = localStorage.getItem(ACTIVE_BRAND_KEY)
+    const active = records.find((item) => item.id === requested) || records[0]
+    return Number(active?.nextNumber || 1)
+  })
   const [serverBudgetReady, setServerBudgetReady] = useState(false)
   const [viewMode, setViewMode] = useState('new')
   const [confirmedBudget, setConfirmedBudget] = useState(null)
@@ -283,7 +373,10 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [priceListOpen, setPriceListOpen] = useState(false)
   const [clientsCollapsed, setClientsCollapsed] = useState(false)
-  const [clientDraft, setClientDraft] = useState(null)
+  const [clientDraft, setClientDraft] = useState(() => {
+    const initial = readStored(CLIENTS_KEY, defaultClients)[0]
+    return initial ? { ...initial } : null
+  })
   const [printPayload, setPrintPayload] = useState(null)
   const clientInput = useRef(null)
   const productInput = useRef(null)
@@ -293,32 +386,109 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
 
   const selectedClient = clients.find((client) => client.id === selectedClientId) || clients[0] || null
   const selectedGenerated = generatedBudgets.find((budget) => budget.id === selectedGeneratedId) || generatedBudgets[0] || null
+  const pendingBudgetCount = generatedBudgets.filter((budget) => budget.syncStatus === 'pending').length
+  const conflictedBudgetCount = generatedBudgets.filter((budget) => budget.syncStatus === 'conflict').length
 
   useEffect(() => {
+    if (!online) {
+      return undefined
+    }
+
     let cancelled = false
     const loadBudgetState = async () => {
       try {
         const response = await fetch(`${API_BASE}/budgets/state`, { credentials: 'include' })
         if (!response.ok) throw new Error(`No se pudo cargar la configuración de presupuestos (${response.status}).`)
-        const data = await response.json()
+        let data = await response.json()
         if (cancelled) return
+
+        const restoringBackup = hasPendingRestore()
+        const localClients = readStored(CLIENTS_KEY, defaultClients)
+        const localProducts = readStored(PRODUCTS_KEY, defaultProducts)
+        const localManualProducts = readStored(MANUAL_PRODUCTS_KEY, [])
+        const localBrands = cachedBrands()
+        const localActiveBrandId = localStorage.getItem(ACTIVE_BRAND_KEY) || localBrands[0]?.id || ''
+
+        if (restoringBackup) {
+          const catalogOwner = localStorage.getItem(CATALOG_OWNER_KEY) || ''
+          if (catalogOwner && data.account && catalogOwner !== data.account) {
+            throw new Error('El respaldo pertenece a otra cuenta de Panadero y no se sincronizó.')
+          }
+          const restoreResponse = await fetch(`${API_BASE}/budgets/settings`, {
+            method: 'PUT',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              brands: localBrands,
+              activeBrandId: localActiveBrandId,
+              clients: localClients,
+              products: localProducts,
+              manualProducts: localManualProducts,
+              defaultProfit: numberValue(localStorage.getItem(DEFAULT_PROFIT_KEY), 30),
+            }),
+          })
+          const restoredState = await restoreResponse.json().catch(() => ({}))
+          if (!restoreResponse.ok) throw new Error(restoredState.error || 'No se pudo sincronizar el respaldo restaurado.')
+          data = { ...data, ...restoredState, account: data.account }
+        } else if (localStorage.getItem(BRANDS_DIRTY_KEY) === '1') {
+          const brandResponse = await fetch(`${API_BASE}/budgets/settings`, {
+            method: 'PUT',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ brands: localBrands, activeBrandId: localActiveBrandId }),
+          })
+          const brandState = await brandResponse.json().catch(() => ({}))
+          if (!brandResponse.ok) throw new Error(brandState.error || 'No se pudo sincronizar la configuración local de marcas.')
+          data = { ...data, ...brandState, account: data.account }
+          localStorage.removeItem(BRANDS_DIRTY_KEY)
+        }
+
+        const localHistory = readStored(BUDGETS_KEY, [])
+        const serverIds = new Set((data.generatedBudgets || []).map((item) => item.id))
+        const storedQueue = readStored(PENDING_BUDGETS_KEY, [])
+        const unsyncedHistory = localHistory.filter((item) => item.syncStatus === 'pending' || item.syncStatus === 'conflict')
+        const restoredMissing = restoringBackup
+          ? localHistory.filter((item) => !serverIds.has(item.id)).map((item) => ({ ...item, syncStatus: 'pending' }))
+          : []
+        const queueMap = new Map()
+        ;[...storedQueue, ...unsyncedHistory, ...restoredMissing].forEach((item) => queueMap.set(item.id, item))
+        const syncResult = await syncPendingBudgetQueue([...queueMap.values()])
+        if (syncResult.latestState) data = { ...data, ...syncResult.latestState, account: data.account }
+        localStorage.setItem(PENDING_BUDGETS_KEY, JSON.stringify(syncResult.remaining))
 
         const serverBrands = Array.isArray(data.brands) && data.brands.length
           ? data.brands.map((item, index) => normalizeBrandRecord(item, `brand-${index + 1}`))
-          : [normalizeBrandRecord(data.brand || legacyBrand, 'brand-1')]
-        const serverActiveId = serverBrands.some((item) => item.id === data.activeBrandId)
+          : [normalizeBrandRecord(data.brand || readStored(BRAND_KEY, DEFAULT_BRAND), 'brand-1')]
+        const additionalLocalBrands = localBrands.filter((localBrand) => !serverBrands.some((serverBrand) => serverBrand.id === localBrand.id))
+        const pendingMaxByBrand = syncResult.remaining.reduce((result, budget) => {
+          const id = budgetBrandId(budget, serverBrands[0]?.id)
+          result[id] = Math.max(result[id] || 0, Number(budget.number || 0))
+          return result
+        }, {})
+        const mergedBrands = [...serverBrands, ...additionalLocalBrands].map((serverBrand) => {
+          const localBrand = localBrands.find((item) => item.id === serverBrand.id)
+          return normalizeBrandRecord({
+            ...serverBrand,
+            nextNumber: Math.max(Number(serverBrand.nextNumber || 1), Number(localBrand?.nextNumber || 1), Number(pendingMaxByBrand[serverBrand.id] || 0) + 1),
+          }, serverBrand.id)
+        })
+        const serverActiveId = mergedBrands.some((item) => item.id === data.activeBrandId)
           ? data.activeBrandId
-          : serverBrands[0].id
-        setBrands(serverBrands)
+          : mergedBrands.some((item) => item.id === localActiveBrandId) ? localActiveBrandId : mergedBrands[0].id
+
+        setBrands(mergedBrands)
         setActiveBrandId(serverActiveId)
-        const activeServerBrand = serverBrands.find((item) => item.id === serverActiveId) || serverBrands[0]
+        const activeServerBrand = mergedBrands.find((item) => item.id === serverActiveId) || mergedBrands[0]
         setNextNumber(Number(activeServerBrand?.nextNumber || data.nextNumber || 1))
         localStorage.setItem(BRAND_KEY, JSON.stringify(activeServerBrand))
+        localStorage.setItem(BRANDS_KEY, JSON.stringify(mergedBrands))
+        localStorage.setItem(ACTIVE_BRAND_KEY, serverActiveId)
 
         if (Array.isArray(data.generatedBudgets)) {
-          setGeneratedBudgets(data.generatedBudgets)
-          setSelectedGeneratedId(data.generatedBudgets[0]?.id || '')
-          localStorage.setItem(BUDGETS_KEY, JSON.stringify(data.generatedBudgets))
+          const nextHistory = mergeBudgets(data.generatedBudgets, syncResult.remaining)
+          setGeneratedBudgets(nextHistory)
+          setSelectedGeneratedId(nextHistory[0]?.id || '')
+          localStorage.setItem(BUDGETS_KEY, JSON.stringify(nextHistory))
         }
 
         // Clientes/productos pertenecen a la cuenta autenticada. La copia antigua de
@@ -333,6 +503,7 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
           const serverManualProducts = Array.isArray(data.manualProducts) ? data.manualProducts : []
           setClients(serverClients)
           setSelectedClientId(serverClients[0]?.id || '')
+          setClientDraft(serverClients[0] ? { ...serverClients[0] } : null)
           setProducts(serverProducts)
           setManualProducts(serverManualProducts)
           localStorage.setItem(CLIENTS_KEY, JSON.stringify(serverClients))
@@ -343,6 +514,7 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
           // Una cuenta nueva nunca hereda el catálogo local de otra sesión.
           setClients([])
           setSelectedClientId('')
+          setClientDraft(null)
           setProducts([])
           setManualProducts([])
           localStorage.setItem(CLIENTS_KEY, '[]')
@@ -358,18 +530,37 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
           localStorage.setItem(DEFAULT_PROFIT_KEY, String(data.defaultProfit))
         }
 
+        if (restoringBackup) {
+          clearPendingRestore()
+          localStorage.removeItem(BRANDS_DIRTY_KEY)
+        }
+        if (syncResult.remaining.some((item) => item.syncStatus === 'conflict')) {
+          setNotice('Hay presupuestos locales con un número ya usado en otra computadora. Se conservaron sin modificar para que puedas revisarlos.')
+        } else if (syncResult.syncedCount > 0) {
+          setNotice(`${syncResult.syncedCount} presupuesto${syncResult.syncedCount === 1 ? '' : 's'} guardado${syncResult.syncedCount === 1 ? '' : 's'} offline se sincronizaron correctamente.`)
+        }
+        notifyLocalDataChanged()
+
       } catch (error) {
         console.warn('No se pudo cargar el estado online de presupuestos:', error)
+        if (!cancelled) setNotice(error.message)
       } finally {
         if (!cancelled) setServerBudgetReady(true)
       }
     }
     loadBudgetState()
     return () => { cancelled = true }
-  }, [])
+  }, [online])
 
   useEffect(() => {
-    if (!serverBudgetReady) return undefined
+    const active = brands.find((item) => item.id === activeBrandId) || brands[0]
+    localStorage.setItem(BRANDS_KEY, JSON.stringify(brands))
+    localStorage.setItem(ACTIVE_BRAND_KEY, activeBrandId)
+    if (active) localStorage.setItem(BRAND_KEY, JSON.stringify(active))
+  }, [brands, activeBrandId])
+
+  useEffect(() => {
+    if (!serverBudgetReady || !online) return undefined
     const timer = window.setTimeout(async () => {
       try {
         await fetch(`${API_BASE}/budgets/settings`, {
@@ -383,10 +574,11 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
       }
     }, 500)
     return () => window.clearTimeout(timer)
-  }, [serverBudgetReady, clients, products, manualProducts, defaultProfit])
+  }, [serverBudgetReady, online, clients, products, manualProducts, defaultProfit])
 
   useEffect(() => {
     const loadFx = async () => {
+      if (!online) return
       setFxLoading(true)
       try {
         const response = await fetch(`${API_BASE}/exchange/bna`)
@@ -403,12 +595,14 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
       }
     }
     loadFx()
-  }, [])
+  }, [online])
 
   useEffect(() => {
     if (documentType === 'budget') {
-      setInvoiceSequence(null)
-      setCommercialInvoice(null)
+      return undefined
+    }
+
+    if (!online) {
       return undefined
     }
 
@@ -435,11 +629,7 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
     }
     loadSequence()
     return () => { cancelled = true }
-  }, [documentType])
-
-  useEffect(() => {
-    setClientDraft(selectedClient ? { ...selectedClient } : null)
-  }, [selectedClientId, selectedClient])
+  }, [documentType, online])
 
   useEffect(() => {
     if (!printPayload) return undefined
@@ -523,6 +713,8 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
 
   const selectClient = (clientId) => {
     setSelectedClientId(clientId)
+    const nextClient = clients.find((client) => client.id === clientId)
+    setClientDraft(nextClient ? { ...nextClient } : null)
     setItems([])
     setConfirmedBudget(null)
     setViewMode('new')
@@ -602,6 +794,45 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
     setPrintPayload({ type: 'transport', data: budget })
   }
 
+  const saveBudgetOnThisComputer = (snapshot, reason = 'sin conexión') => {
+    const fallbackBrandId = brand.id || brands[0]?.id || 'brand-1'
+    const duplicate = generatedBudgets.find((item) => budgetBrandId(item, fallbackBrandId) === fallbackBrandId && Number(item.number) === Number(snapshot.number))
+    if (duplicate) {
+      setNotice(`Ya existe el presupuesto N.º ${String(snapshot.number).padStart(6, '0')} en esta computadora.`)
+      return false
+    }
+
+    const localBudget = {
+      ...snapshot,
+      brandId: fallbackBrandId,
+      originDeviceId: deviceId(),
+      savedLocallyAt: new Date().toISOString(),
+      syncStatus: 'pending',
+    }
+    const nextBudgets = [localBudget, ...generatedBudgets]
+    const storedQueue = readStored(PENDING_BUDGETS_KEY, [])
+    const nextQueue = [localBudget, ...storedQueue.filter((item) => item.id !== localBudget.id)]
+    const followingNumber = Number(snapshot.number) + 1
+    const nextBrands = brands.map((item) => item.id === fallbackBrandId
+      ? { ...item, nextNumber: Math.max(Number(item.nextNumber || 1), followingNumber) }
+      : item)
+
+    setGeneratedBudgets(nextBudgets)
+    setSelectedGeneratedId(localBudget.id)
+    setConfirmedBudget(localBudget)
+    setBrands(nextBrands)
+    setNextNumber(followingNumber)
+    localStorage.setItem(BUDGETS_KEY, JSON.stringify(nextBudgets))
+    localStorage.setItem(PENDING_BUDGETS_KEY, JSON.stringify(nextQueue))
+    localStorage.setItem(BRANDS_KEY, JSON.stringify(nextBrands))
+    const nextActiveBrand = nextBrands.find((item) => item.id === fallbackBrandId)
+    if (nextActiveBrand) localStorage.setItem(BRAND_KEY, JSON.stringify(nextActiveBrand))
+    notifyLocalDataChanged()
+    playSuccessSound()
+    setNotice(`Presupuesto N.º ${String(snapshot.number).padStart(6, '0')} guardado en esta computadora ${reason}. Se sincronizará al recuperar internet.`)
+    return true
+  }
+
   const confirmBudget = async () => {
     if (!clientDraft && !selectedClient) {
       setNotice('Seleccioná un cliente antes de confirmar el presupuesto.')
@@ -629,6 +860,11 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
       total: budgetTotal(items),
     }
 
+    if (!online) {
+      saveBudgetOnThisComputer(snapshot)
+      return
+    }
+
     try {
       const response = await fetch(`${API_BASE}/budgets/confirm`, {
         method: 'POST',
@@ -637,10 +873,15 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
         body: JSON.stringify({ number: requestedNumber, brandId: brand.id, budget: snapshot }),
       })
       const data = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(data.error || 'No se pudo confirmar el presupuesto.')
+      if (!response.ok) {
+        const error = new Error(data.error || 'No se pudo confirmar el presupuesto.')
+        error.saveLocally = response.status >= 500
+        throw error
+      }
 
       const confirmed = data.budget || snapshot
-      const nextBudgets = Array.isArray(data.generatedBudgets) ? data.generatedBudgets : [confirmed, ...generatedBudgets]
+      const pending = readStored(PENDING_BUDGETS_KEY, [])
+      const nextBudgets = mergeBudgets(Array.isArray(data.generatedBudgets) ? data.generatedBudgets : [confirmed, ...generatedBudgets], pending)
       setGeneratedBudgets(nextBudgets)
       setSelectedGeneratedId(confirmed.id)
       setConfirmedBudget(confirmed)
@@ -652,18 +893,31 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
         const nextBrand = nextBrands.find((item) => item.id === nextActive) || nextBrands[0]
         setNextNumber(Number(nextBrand?.nextNumber || data.nextNumber || requestedNumber + 1))
         localStorage.setItem(BRAND_KEY, JSON.stringify(nextBrand))
+        localStorage.setItem(BRANDS_KEY, JSON.stringify(nextBrands))
+        localStorage.setItem(ACTIVE_BRAND_KEY, nextActive)
       } else {
-        setNextNumber(Number(data.nextNumber) || requestedNumber + 1)
+        const followingNumber = Number(data.nextNumber) || requestedNumber + 1
+        setNextNumber(followingNumber)
+        setBrands((current) => current.map((item) => item.id === brand.id ? { ...item, nextNumber: followingNumber } : item))
       }
       localStorage.setItem(BUDGETS_KEY, JSON.stringify(nextBudgets))
+      notifyLocalDataChanged()
       playSuccessSound()
       setNotice(`Presupuesto N.º ${String(requestedNumber).padStart(6, '0')} confirmado y guardado online.`)
     } catch (error) {
-      setNotice(error.message)
+      if (error instanceof TypeError || error.saveLocally || !navigator.onLine) {
+        saveBudgetOnThisComputer(snapshot, 'porque el servidor no respondió')
+      } else {
+        setNotice(error.message)
+      }
     }
   }
 
   const emitCommercialInvoice = async () => {
+    if (!online) {
+      setNotice('La factura no se puede emitir sin internet: Panadero debe consultar ARCA y obtener el CAE real.')
+      return
+    }
     const client = clientDraft || selectedClient
     if (!client) {
       setNotice('Seleccioná un cliente antes de emitir la factura.')
@@ -731,6 +985,10 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
   }
 
   const createDebitNote = async (budget = confirmedBudget) => {
+    if (!online || budget?.syncStatus === 'pending' || budget?.syncStatus === 'conflict') {
+      setNotice('Primero conectá Panadero y sincronizá el presupuesto para registrar una nota asociada.')
+      return
+    }
     if (!budget || budget.status !== 'confirmed') {
       setNotice('Primero confirmá el presupuesto para generar una nota de débito.')
       return
@@ -781,6 +1039,10 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
   }
 
   const cancelGeneratedBudget = async (budget) => {
+    if (!online || budget?.syncStatus === 'pending' || budget?.syncStatus === 'conflict') {
+      setNotice('Primero conectá Panadero y sincronizá este presupuesto antes de cancelarlo.')
+      return
+    }
     if (!budget || budget.status !== 'confirmed') {
       setNotice('Solo se puede cancelar un presupuesto confirmado.')
       return
@@ -819,6 +1081,70 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
     setSelectedGeneratedId(budget.id)
   }
 
+  const resolveBudgetNumberConflict = async (budget) => {
+    if (!online) {
+      setNotice('Conectá Panadero para resolver el número repetido.')
+      return
+    }
+    if (!budget || budget.syncStatus !== 'conflict') return
+    if (!window.confirm(`El presupuesto local N.º ${String(budget.number).padStart(6, '0')} usa un número que ya existe online. ¿Asignarle el próximo número libre y sincronizarlo?`)) return
+
+    const originalNumber = Number(budget.number)
+    try {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const stateResponse = await fetch(`${API_BASE}/budgets/state`, { credentials: 'include' })
+        const state = await stateResponse.json().catch(() => ({}))
+        if (!stateResponse.ok) throw new Error(state.error || 'No se pudo consultar el próximo número libre.')
+        const targetBrandId = budgetBrandId(budget, brand.id)
+        const targetBrand = (state.brands || []).find((item) => item.id === targetBrandId) || state.brand
+        const replacementNumber = Number(targetBrand?.nextNumber || state.nextNumber)
+        if (!Number.isInteger(replacementNumber) || replacementNumber <= 0) throw new Error('El servidor no informó un número de presupuesto válido.')
+
+        const replacement = {
+          ...budget,
+          number: replacementNumber,
+          renumberedFrom: originalNumber,
+          brand: { ...(budget.brand || {}), ...(targetBrand || {}), id: targetBrandId },
+        }
+        delete replacement.syncStatus
+        delete replacement.syncError
+        delete replacement.savedLocallyAt
+
+        const response = await fetch(`${API_BASE}/budgets/confirm`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ number: replacementNumber, brandId: targetBrandId, budget: replacement }),
+        })
+        const data = await response.json().catch(() => ({}))
+        if (response.status === 409) continue
+        if (!response.ok) throw new Error(data.error || 'No se pudo sincronizar el presupuesto.')
+
+        const pending = readStored(PENDING_BUDGETS_KEY, []).filter((item) => item.id !== budget.id)
+        const nextHistory = mergeBudgets(data.generatedBudgets || [data.budget || replacement], pending)
+        const nextBrands = Array.isArray(data.brands) && data.brands.length
+          ? data.brands.map((item, index) => normalizeBrandRecord(item, `brand-${index + 1}`))
+          : brands
+        const saved = data.budget || replacement
+        setGeneratedBudgets(nextHistory)
+        setSelectedGeneratedId(saved.id)
+        setConfirmedBudget(saved)
+        setBrands(nextBrands)
+        const currentBrand = nextBrands.find((item) => item.id === targetBrandId)
+        if (currentBrand) setNextNumber(Number(currentBrand.nextNumber || replacementNumber + 1))
+        localStorage.setItem(PENDING_BUDGETS_KEY, JSON.stringify(pending))
+        localStorage.setItem(BUDGETS_KEY, JSON.stringify(nextHistory))
+        localStorage.setItem(BRANDS_KEY, JSON.stringify(nextBrands))
+        notifyLocalDataChanged()
+        setNotice(`Presupuesto local renumerado de ${String(originalNumber).padStart(6, '0')} a ${String(replacementNumber).padStart(6, '0')} y sincronizado.`)
+        return
+      }
+      throw new Error('El próximo número cambió varias veces. Volvé a intentar la sincronización.')
+    } catch (error) {
+      setNotice(error.message)
+    }
+  }
+
   const duplicateGeneratedBudget = (budget) => {
     const clientId = budget.client?.id
     if (clientId && clients.some((client) => client.id === clientId)) {
@@ -848,6 +1174,23 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
     const nextBrands = exists
       ? brands.map((item) => item.id === cleaned.id ? cleaned : item)
       : [...brands, cleaned]
+    setBrands(nextBrands)
+    setActiveBrandId(cleaned.id)
+    setNextNumber(Number(cleaned.nextNumber || 1))
+    localStorage.setItem(BRANDS_KEY, JSON.stringify(nextBrands))
+    localStorage.setItem(ACTIVE_BRAND_KEY, cleaned.id)
+    localStorage.setItem(BRAND_KEY, JSON.stringify(cleaned))
+    setBrandDraft(null)
+    setSettingsOpen(false)
+    setConfirmedBudget(null)
+    notifyLocalDataChanged()
+
+    if (!online) {
+      localStorage.setItem(BRANDS_DIRTY_KEY, '1')
+      setNotice(`${cleaned.name} fue guardada en esta computadora. Se sincronizará cuando vuelva internet.`)
+      return
+    }
+
     try {
       const response = await fetch(`${API_BASE}/budgets/settings`, {
         method: 'PUT',
@@ -863,12 +1206,12 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
       const stored = storedBrands.find((item) => item.id === cleaned.id) || cleaned
       setNextNumber(Number(stored.nextNumber || 1))
       localStorage.setItem(BRAND_KEY, JSON.stringify(stored))
-      setBrandDraft(null)
-      setSettingsOpen(false)
-      setConfirmedBudget(null)
+      localStorage.setItem(BRANDS_KEY, JSON.stringify(storedBrands))
+      localStorage.setItem(ACTIVE_BRAND_KEY, cleaned.id)
+      localStorage.removeItem(BRANDS_DIRTY_KEY)
       setNotice(`${stored.name} fue guardada y quedó seleccionada.`)
     } catch (error) {
-      setNotice(error.message)
+      setNotice(`${cleaned.name} quedó guardada en esta computadora. No se pudo sincronizar todavía: ${error.message}`)
     }
   }
 
@@ -879,7 +1222,12 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
     setNextNumber(Number(selected.nextNumber || 1))
     setConfirmedBudget(null)
     localStorage.setItem(BRAND_KEY, JSON.stringify(selected))
+    localStorage.setItem(ACTIVE_BRAND_KEY, brandId)
     try {
+      if (!online) {
+        localStorage.setItem(BRANDS_DIRTY_KEY, '1')
+        return
+      }
       await fetch(`${API_BASE}/budgets/settings`, {
         method: 'PUT',
         credentials: 'include',
@@ -1083,11 +1431,19 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
     setClientDraft((current) => current ? { ...current, [field]: value } : current)
   }
 
+  const updateNextBudgetNumber = (value) => {
+    const digits = String(value).replace(/\D/g, '')
+    const number = Number(digits)
+    if (!Number.isInteger(number) || number <= 0) return
+    setNextNumber(number)
+    setBrands((current) => current.map((item) => item.id === brand.id ? { ...item, nextNumber: number } : item))
+  }
+
   return (
     <main className={`budget-workspace ${invoiceMode ? 'invoice-builder-workspace' : ''}`}>
       <header className={`budget-topbar section-banner section-banner-${invoiceMode ? 'facturas' : 'presupuestos'}`}>
         <div className="budget-title-block">
-          <span>{invoiceMode ? 'Facturación directa · ARCA' : 'Gestión comercial'}</span>
+          <span>{invoiceMode ? 'Facturación directa · ARCA' : online ? 'Gestión comercial' : 'Gestión comercial · guardado local'}</span>
           <h1>{invoiceMode ? 'Nueva factura' : 'Presupuesto'}</h1>
           <div className="budget-view-tabs">
             {invoiceMode ? (
@@ -1115,6 +1471,13 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
       </header>
 
       {notice && <button type="button" className={`notice-bar ${noticeTone(notice)}`} onClick={() => setNotice('')}><span>{notice}</span><strong>×</strong></button>}
+
+      {!invoiceMode && (!online || pendingBudgetCount > 0 || conflictedBudgetCount > 0) && (
+        <section className={`budget-local-status ${conflictedBudgetCount > 0 ? 'conflict' : ''}`} role="status">
+          <div><i/><span><strong>{!online ? 'Presupuestos offline activos' : 'Sincronización local'}</strong><small>{!online ? 'El conteo, los clientes y los presupuestos quedan guardados en esta computadora.' : 'Panadero está enviando los presupuestos guardados localmente.'}</small></span></div>
+          <b>{conflictedBudgetCount > 0 ? `${conflictedBudgetCount} con número repetido` : pendingBudgetCount > 0 ? `${pendingBudgetCount} pendiente${pendingBudgetCount === 1 ? '' : 's'}` : `Próximo N.º ${String(nextNumber).padStart(6, '0')}`}</b>
+        </section>
+      )}
 
       <section className="budget-fx-strip">
         {invoiceMode && <div className="invoice-arca-badge"><span>ARCA</span><strong>Emisión real con CAE</strong></div>}
@@ -1160,7 +1523,7 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
                 <button className="primary-button" type="button" disabled={!hasClientChanges} onClick={saveClient}>Guardar cliente</button>
                 {invoiceMode && <span className="invoice-editor-action-divider" aria-hidden="true" />}
                 {invoiceMode && <button className="ghost-button" type="button" onClick={printDraft}>Vista previa PDF</button>}
-                {invoiceMode && <button className="ghost-button budget-confirm-button" type="button" disabled={invoiceEmitting} onClick={emitCommercialInvoice}>{invoiceEmitting ? 'Emitiendo…' : 'Emitir en ARCA'}</button>}
+                {invoiceMode && <button className="ghost-button budget-confirm-button" type="button" disabled={invoiceEmitting || !online} onClick={emitCommercialInvoice}>{!online ? 'ARCA sin conexión' : invoiceEmitting ? 'Emitiendo…' : 'Emitir en ARCA'}</button>}
               </div>
             </div>
 
@@ -1205,7 +1568,7 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
           </section>
 
           <section className="budget-preview-column">
-            <div className="budget-column-heading budget-preview-heading"><div><span>Documento</span><strong>Vista previa</strong></div><div className="budget-preview-actions">{!invoiceMode && <button className="ghost-button" type="button" onClick={printDraft}>Guardar borrador</button>}{!invoiceMode && <button className="ghost-button budget-confirm-button" type="button" onClick={confirmBudget}>Confirmar</button>}{!invoiceMode && <button className="ghost-button" type="button" disabled={!confirmedBudget} onClick={() => printTransport(confirmedBudget)}>Transporte</button>}<button className="primary-button" type="button" disabled={documentType === 'budget' ? !confirmedBudget : !commercialInvoice} onClick={documentType === 'budget' ? () => printConfirmedBudget(confirmedBudget) : openCommercialInvoicePdf}>PDF / Descargar</button></div></div>
+            <div className="budget-column-heading budget-preview-heading"><div><span>Documento</span><strong>Vista previa</strong></div><div className="budget-preview-actions">{!invoiceMode && <button className="ghost-button" type="button" onClick={printDraft}>Guardar borrador</button>}{!invoiceMode && <button className="ghost-button budget-confirm-button" type="button" onClick={confirmBudget}>{online ? 'Confirmar' : 'Guardar en esta PC'}</button>}{!invoiceMode && <button className="ghost-button" type="button" disabled={!confirmedBudget} onClick={() => printTransport(confirmedBudget)}>Transporte</button>}<button className="primary-button" type="button" disabled={documentType === 'budget' ? !confirmedBudget : !commercialInvoice} onClick={documentType === 'budget' ? () => printConfirmedBudget(confirmedBudget) : openCommercialInvoicePdf}>PDF / Descargar</button></div></div>
             <div className="budget-brand-tabs" aria-label={invoiceMode ? 'Marcas de factura' : 'Marcas de presupuesto'}>
               {brands.map((item) => <button key={item.id} type="button" className={item.id === brand.id ? 'active' : ''} onClick={() => selectBrand(item.id)}><span>{item.name || 'Sin nombre'}</span><small>{invoiceMode ? 'Emisor' : `N.º ${String(item.id === brand.id ? nextNumber : item.nextNumber || 1).padStart(6, '0')}`}</small></button>)}
               <button type="button" className="brand-tab-edit" onClick={editActiveBrand}>Editar</button>
@@ -1215,7 +1578,7 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
               <div className={`budget-number-panel ${confirmedBudget?.debitNote ? 'has-debit-note' : ''}`}>
                 <div>
                   <span>N.º presupuesto</span>
-                  <small>{confirmedBudget?.debitNote ? 'Presupuesto con nota de débito' : confirmedBudget ? 'Presupuesto confirmado' : 'Podés editarlo antes de confirmar'}</small>
+                  <small>{confirmedBudget?.syncStatus === 'pending' ? 'Guardado en esta computadora · pendiente de sincronizar' : confirmedBudget?.syncStatus === 'conflict' ? 'Guardado local · el número ya existe online' : confirmedBudget?.debitNote ? 'Presupuesto con nota de débito' : confirmedBudget ? 'Presupuesto confirmado' : online ? 'Podés editarlo antes de confirmar' : 'El correlativo se guarda en esta computadora'}</small>
                 </div>
                 <div className="budget-number-actions">
                   <input
@@ -1224,17 +1587,13 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
                     pattern="[0-9]*"
                     value={String(confirmedBudget?.number || nextNumber).padStart(6, '0')}
                     disabled={Boolean(confirmedBudget)}
-                    onChange={(event) => {
-                      const digits = event.target.value.replace(/\D/g, '')
-                      const value = Number(digits)
-                      if (Number.isInteger(value) && value > 0) setNextNumber(value)
-                    }}
+                    onChange={(event) => updateNextBudgetNumber(event.target.value)}
                     aria-label="Número de presupuesto"
                   />
                   <button
                     type="button"
                     className="ghost-button budget-debit-note-button"
-                    disabled={!confirmedBudget || Boolean(confirmedBudget?.debitNote)}
+                    disabled={!online || !confirmedBudget || Boolean(confirmedBudget?.debitNote) || Boolean(confirmedBudget?.syncStatus)}
                     onClick={() => createDebitNote(confirmedBudget)}
                   >
                     {confirmedBudget?.debitNote ? 'Nota de débito emitida' : 'Nota de débito'}
@@ -1264,8 +1623,8 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
             <div className="budget-column-heading"><div><span>Historial</span><strong>Presupuestos generados</strong></div><small>{generatedBudgets.length}</small></div>
             <div className="generated-budget-list">
               {generatedBudgets.length ? generatedBudgets.map((budget) => (
-                <button type="button" key={budget.id} className={`generated-budget-card ${selectedGenerated?.id === budget.id ? 'active' : ''} ${budget.debitNote ? 'has-debit-note' : ''} ${budget.cancelledAt ? 'cancelled' : ''}`} onClick={() => openGeneratedBudget(budget)}>
-                  <span>N.º {String(budget.number).padStart(6, '0')} {budget.cancelledAt ? `· CANCELADO · ${budget.cancellation?.noteType === 'debit' ? 'NOTA DE DÉBITO' : 'NOTA DE CRÉDITO'}` : budget.debitNote ? '· NOTA DE DÉBITO' : ''}</span>
+                <button type="button" key={budget.id} className={`generated-budget-card ${selectedGenerated?.id === budget.id ? 'active' : ''} ${budget.debitNote ? 'has-debit-note' : ''} ${budget.cancelledAt ? 'cancelled' : ''} ${budget.syncStatus ? `sync-${budget.syncStatus}` : ''}`} onClick={() => openGeneratedBudget(budget)}>
+                  <span>N.º {String(budget.number).padStart(6, '0')} {budget.syncStatus === 'pending' ? '· GUARDADO LOCAL' : budget.syncStatus === 'conflict' ? '· CONFLICTO DE NÚMERO' : budget.cancelledAt ? `· CANCELADO · ${budget.cancellation?.noteType === 'debit' ? 'NOTA DE DÉBITO' : 'NOTA DE CRÉDITO'}` : budget.debitNote ? '· NOTA DE DÉBITO' : ''}</span>
                   <strong>{budget.client?.legalName || budget.client?.name || 'Cliente'}</strong>
                   <small>{new Date(budget.createdAt).toLocaleDateString('es-AR')} · {formatCurrency(budget.total)}</small>
                 </button>
@@ -1273,7 +1632,7 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
             </div>
           </aside>
           <section className="generated-budget-detail-column">
-            <div className="budget-column-heading"><div><span>Documento guardado</span><strong>{selectedGenerated ? `Presupuesto N.º ${String(selectedGenerated.number).padStart(6, '0')}` : 'Sin selección'}</strong>{selectedGenerated?.debitNote && <small className="budget-debit-note-summary">Nota de débito · {formatCurrency(selectedGenerated.debitNote.amount)} · {selectedGenerated.debitNote.reason}</small>}</div>{selectedGenerated && <div className="budget-preview-actions"><button className="ghost-button" type="button" onClick={() => duplicateGeneratedBudget(selectedGenerated)}>Duplicar</button><button className="ghost-button budget-cancel-button" type="button" disabled={Boolean(selectedGenerated.cancelledAt)} onClick={() => cancelGeneratedBudget(selectedGenerated)}>{selectedGenerated.cancelledAt ? 'Cancelado' : 'Cancelar'}</button><button className="ghost-button" type="button" onClick={() => printTransport(selectedGenerated)}>Transporte</button><button className="primary-button" type="button" onClick={() => printConfirmedBudget(selectedGenerated)}>PDF / Descargar</button></div>}</div>
+            <div className="budget-column-heading"><div><span>Documento guardado</span><strong>{selectedGenerated ? `Presupuesto N.º ${String(selectedGenerated.number).padStart(6, '0')}` : 'Sin selección'}</strong>{selectedGenerated?.syncStatus && <small className={`budget-sync-summary ${selectedGenerated.syncStatus}`}>{selectedGenerated.syncStatus === 'conflict' ? selectedGenerated.syncError || 'El número ya existe online; el documento local no fue modificado.' : 'Guardado en esta computadora · pendiente de sincronización.'}</small>}{selectedGenerated?.debitNote && <small className="budget-debit-note-summary">Nota de débito · {formatCurrency(selectedGenerated.debitNote.amount)} · {selectedGenerated.debitNote.reason}</small>}</div>{selectedGenerated && <div className="budget-preview-actions"><button className="ghost-button" type="button" onClick={() => duplicateGeneratedBudget(selectedGenerated)}>Duplicar</button>{selectedGenerated.syncStatus === 'conflict' && <button className="ghost-button budget-resolve-conflict" type="button" disabled={!online} onClick={() => resolveBudgetNumberConflict(selectedGenerated)}>Asignar próximo número</button>}<button className="ghost-button budget-cancel-button" type="button" disabled={!online || Boolean(selectedGenerated.cancelledAt) || Boolean(selectedGenerated.syncStatus)} onClick={() => cancelGeneratedBudget(selectedGenerated)}>{selectedGenerated.cancelledAt ? 'Cancelado' : 'Cancelar'}</button><button className="ghost-button" type="button" onClick={() => printTransport(selectedGenerated)}>Transporte</button><button className="primary-button" type="button" onClick={() => printConfirmedBudget(selectedGenerated)}>PDF / Descargar</button></div>}</div>
             <div className="budget-preview-scroll generated-preview-scroll">{selectedGenerated ? <Preview brand={selectedGenerated.brand || brand} client={selectedGenerated.client} items={selectedGenerated.items || []} number={selectedGenerated.number} /> : <div className="budget-empty-editor">Confirmá un presupuesto para verlo en el historial.</div>}</div>
           </section>
         </div>

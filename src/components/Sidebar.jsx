@@ -26,22 +26,30 @@ const secondaryItems = [
 
 const themeLabels = { cursor: 'Cursor', black: 'Black', paper: 'Paper' }
 
-function Sidebar({ activeSection, onSectionChange, salesCount = 0, settingsOpen, onToggleSettings, theme, onThemeChange, fontScale, onFontScaleChange, user, onLogout, collapsed, onToggleCollapsed }) {
+function Sidebar({ activeSection, onSectionChange, salesCount = 0, settingsOpen, onToggleSettings, theme, onThemeChange, fontScale, onFontScaleChange, user, onLogout, collapsed, onToggleCollapsed, offline = false, installed = false, canInstall = false, onInstall, lastBackupAt, onExportBackup, onImportBackup, onRestoreAutomaticBackup }) {
   const decreaseFont = () => onFontScaleChange((current) => Math.max(0.9, Number((current - 0.05).toFixed(2))))
   const increaseFont = () => onFontScaleChange((current) => Math.min(1.35, Number((current + 0.05).toFixed(2))))
+  const backupLabel = lastBackupAt
+    ? new Date(lastBackupAt).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })
+    : 'Se creará automáticamente'
 
-  const renderItem = ({ icon, label, section, accent }) => (
-    <button
-      className={`sidebar-item ${accent ? `sidebar-item-${accent}` : ''} ${activeSection === section ? 'active' : ''}`}
-      type="button"
-      key={label}
-      onClick={() => onSectionChange(section)}
-    >
-      <span className="sidebar-icon"><Icon name={icon}/></span>
-      <span>{label}</span>
-      {label === 'Mercado Libre' && <small className="nav-count">{salesCount}</small>}
-    </button>
-  )
+  const renderItem = ({ icon, label, section, accent }) => {
+    const offlineDisabled = offline && !['inicio', 'presupuestos'].includes(section)
+    return (
+      <button
+        className={`sidebar-item ${accent ? `sidebar-item-${accent}` : ''} ${activeSection === section ? 'active' : ''}`}
+        type="button"
+        key={label}
+        onClick={() => onSectionChange(section)}
+        disabled={offlineDisabled}
+        title={offlineDisabled ? 'Requiere conexión a internet' : undefined}
+      >
+        <span className="sidebar-icon"><Icon name={icon}/></span>
+        <span>{label}</span>
+        {label === 'Mercado Libre' && <small className="nav-count">{salesCount}</small>}
+      </button>
+    )
+  }
 
   return (
     <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
@@ -63,7 +71,39 @@ function Sidebar({ activeSection, onSectionChange, salesCount = 0, settingsOpen,
         </button>
       </nav>
 
-      {settingsOpen && <section className="appearance-panel" aria-label="Apariencia"><div className="appearance-heading"><div><strong>Apariencia</strong><small>Se guarda automáticamente</small></div><button type="button" onClick={onToggleSettings} aria-label="Cerrar">×</button></div><div className="appearance-group"><span className="appearance-label">Tema</span><div className="theme-options">{Object.keys(themeLabels).map((name) => <button key={name} type="button" className={`theme-option ${theme === name ? 'selected' : ''}`} onClick={() => onThemeChange(name)}><span className={`theme-preview ${name}`} aria-hidden="true"/><span>{themeLabels[name]}</span><span className="theme-check">{theme === name ? '●' : '○'}</span></button>)}</div></div><div className="appearance-group"><div className="font-size-heading"><span className="appearance-label">Tamaño de texto</span><strong>{Math.round(fontScale * 100)}%</strong></div><div className="font-size-controls"><button type="button" onClick={decreaseFont}>A−</button><button type="button" className="font-reset" onClick={() => onFontScaleChange(1.08)}>Restablecer</button><button type="button" onClick={increaseFont}>A+</button></div></div></section>}
+      {settingsOpen && (
+        <section className="appearance-panel" aria-label="Configuración">
+          <div className="appearance-heading">
+            <div><strong>Configuración</strong><small>Panadero · versión 2026.10.15</small></div>
+            <button type="button" onClick={onToggleSettings} aria-label="Cerrar">×</button>
+          </div>
+          <div className="appearance-group">
+            <span className="appearance-label">Tema</span>
+            <div className="theme-options">
+              {Object.keys(themeLabels).map((name) => (
+                <button key={name} type="button" className={`theme-option ${theme === name ? 'selected' : ''}`} onClick={() => onThemeChange(name)}>
+                  <span className={`theme-preview ${name}`} aria-hidden="true"/><span>{themeLabels[name]}</span><span className="theme-check">{theme === name ? '●' : '○'}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="appearance-group">
+            <div className="font-size-heading"><span className="appearance-label">Tamaño de texto</span><strong>{Math.round(fontScale * 100)}%</strong></div>
+            <div className="font-size-controls"><button type="button" onClick={decreaseFont}>A−</button><button type="button" className="font-reset" onClick={() => onFontScaleChange(1.08)}>Restablecer</button><button type="button" onClick={increaseFont}>A+</button></div>
+          </div>
+          <div className="appearance-group local-app-group">
+            <span className="appearance-label">Instalación y respaldo</span>
+            <div className={`local-app-status ${offline ? 'offline' : 'online'}`}><i/><span><strong>{offline ? 'Modo sin conexión' : 'Conectado'}</strong><small>{offline ? 'Presupuestos habilitados' : 'Sincronización disponible'}</small></span></div>
+            <button className="local-app-button install" type="button" onClick={onInstall} disabled={installed}>{installed ? 'Panadero está instalado' : canInstall ? 'Instalar Panadero' : 'Cómo instalar Panadero'}</button>
+            <div className="local-backup-actions">
+              <button type="button" onClick={onExportBackup}>Exportar backup</button>
+              <label>Restaurar archivo<input type="file" accept="application/json,.json" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) onImportBackup(file) }} /></label>
+            </div>
+            <button className="local-app-button subtle" type="button" onClick={onRestoreAutomaticBackup}>Restaurar copia automática</button>
+            <small className="local-backup-date">Presupuestos, clientes y catálogo · última copia local: {backupLabel}</small>
+          </div>
+        </section>
+      )}
 
       <div className="sidebar-footer"><div className="profile-card"><span className="profile-avatar">FA</span><span className="profile-copy"><strong>{user?.name || 'Fede Amurin'}</strong><small>{user?.role || 'Administrador'}</small></span><button className="logout-button" type="button" onClick={onLogout}>Salir</button></div></div>
     </aside>

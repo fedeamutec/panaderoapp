@@ -300,6 +300,12 @@ app.post('/api/budgets/confirm', async (req, res) => {
         || current.brands[0]
       if (!activeBrand) throw new Error('No hay una marca configurada para este presupuesto.')
 
+      const requestedId = String(req.body?.budget?.id || '')
+      const alreadyStored = requestedId
+        ? current.generatedBudgets.find((item) => item.id === requestedId)
+        : null
+      if (alreadyStored) return current
+
       const duplicate = current.generatedBudgets.find((item) => {
         const itemBrandId = item?.brand?.id || item?.brandId || current.brands[0]?.id
         return itemBrandId === activeBrand.id && Number(item?.number) === requestedNumber
