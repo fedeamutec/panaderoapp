@@ -3,7 +3,12 @@ import { formatCurrency } from '../components/SalesTable'
 import defaultClients from '../Data/BudgetClients.json'
 import defaultProducts from '../Data/BudgetProducts.json'
 import successSoundUrl from '../assets/panadero-success.wav'
-import { clearPendingRestore, hasPendingRestore } from '../utils/localBackup'
+import {
+  clearPendingRestore,
+  hasPendingRestore,
+  readLocalJson,
+  writeLocalJson,
+} from '../utils/localBackup'
 
 const CLIENTS_KEY = 'panadero-budget-clients'
 const PRODUCTS_KEY = 'panadero-budget-products'
@@ -374,6 +379,7 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory, online = true }) {
   const [invoiceSequenceLoading, setInvoiceSequenceLoading] = useState(false)
   const [invoiceEmitting, setInvoiceEmitting] = useState(false)
   const [generatedBudgets, setGeneratedBudgets] = useState(() => readStored(BUDGETS_KEY, []))
+  const [offlineStorageReady, setOfflineStorageReady] = useState(false)
   const [nextNumber, setNextNumber] = useState(() => {
     const records = cachedBrands()
     const requested = localStorage.getItem(ACTIVE_BRAND_KEY)
@@ -405,6 +411,32 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory, online = true }) {
   const conflictedBudgetCount = generatedBudgets.filter((budget) => budget.syncStatus === 'conflict').length
 
   useEffect(() => {
+    let cancelled = false
+    const hydrateOfflineHistory = async () => {
+      const legacyHistory = readStored(BUDGETS_KEY, [])
+      const legacyQueue = readStored(PENDING_BUDGETS_KEY, [])
+      const [history] = await Promise.all([
+        readLocalJson(BUDGETS_KEY, legacyHistory),
+        readLocalJson(PENDING_BUDGETS_KEY, legacyQueue),
+      ])
+      if (cancelled) return
+      const safeHistory = Array.isArray(history) ? history : []
+      setGeneratedBudgets(safeHistory)
+      setSelectedGeneratedId((current) => safeHistory.some((item) => item.id === current) ? current : safeHistory[0]?.id || '')
+      setOfflineStorageReady(true)
+    }
+    hydrateOfflineHistory().catch((error) => {
+      console.warn('No se pudo preparar el historial offline:', error)
+      if (!cancelled) {
+        setNotice('No se pudo preparar el almacenamiento offline de presupuestos.')
+        setOfflineStorageReady(true)
+      }
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    if (!offlineStorageReady) return undefined
     if (!online) {
       return undefined
     }
@@ -458,9 +490,11 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory, online = true }) {
           localStorage.removeItem(BRANDS_DIRTY_KEY)
         }
 
-        const localHistory = readStored(BUDGETS_KEY, [])
+        const storedLocalHistory = await readLocalJson(BUDGETS_KEY, [])
+        const localHistory = Array.isArray(storedLocalHistory) ? storedLocalHistory : []
         const serverIds = new Set((data.generatedBudgets || []).map((item) => item.id))
-        const storedQueue = readStored(PENDING_BUDGETS_KEY, [])
+        const storedPendingQueue = await readLocalJson(PENDING_BUDGETS_KEY, [])
+        const storedQueue = Array.isArray(storedPendingQueue) ? storedPendingQueue : []
         const unsyncedHistory = localHistory.filter((item) => item.syncStatus === 'pending' || item.syncStatus === 'conflict')
         const restoredMissing = restoringBackup
           ? localHistory.filter((item) => !serverIds.has(item.id)).map((item) => ({ ...item, syncStatus: 'pending' }))
@@ -469,7 +503,7 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory, online = true }) {
         ;[...storedQueue, ...unsyncedHistory, ...restoredMissing].forEach((item) => queueMap.set(item.id, item))
         const syncResult = await syncPendingBudgetQueue([...queueMap.values()])
         if (syncResult.latestState) data = { ...data, ...syncResult.latestState, account: data.account }
-        localStorage.setItem(PENDING_BUDGETS_KEY, JSON.stringify(syncResult.remaining))
+        await writeLocalJson(PENDING_BUDGETS_KEY, syncResult.remaining)
 
         const serverBrands = Array.isArray(data.brands) && data.brands.length
           ? data.brands.map((item, index) => normalizeBrandRecord(item, `brand-${index + 1}`))
@@ -503,7 +537,7 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory, online = true }) {
           const nextHistory = mergeBudgets(data.generatedBudgets, syncResult.remaining)
           setGeneratedBudgets(nextHistory)
           setSelectedGeneratedId(nextHistory[0]?.id || '')
-          localStorage.setItem(BUDGETS_KEY, JSON.stringify(nextHistory))
+          await writeLocalJson(BUDGETS_KEY, nextHistory)
         }
 
         // Clientes/productos pertenecen a la cuenta autenticada. La copia antigua de
@@ -565,7 +599,7 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory, online = true }) {
     }
     loadBudgetState()
     return () => { cancelled = true }
-  }, [online])
+  }, [online, offlineStorageReady])
 
   useEffect(() => {
     const active = brands.find((item) => item.id === activeBrandId) || brands[0]
@@ -809,7 +843,7 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory, online = true }) {
     setPrintPayload({ type: 'transport', data: budget })
   }
 
-  const saveBudgetOnThisComputer = (snapshot, reason = 'sin conexión') => {
+  const saveBudgetOnThisComputer = async (snapshot, reason = 'sin conexión') => {
     const fallbackBrandId = brand.id || brands[0]?.id || 'brand-1'
     const duplicate = generatedBudgets.find((item) => budgetBrandId(item, fallbackBrandId) === fallbackBrandId && Number(item.number) === Number(snapshot.number))
     if (duplicate) {
@@ -825,23 +859,33 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory, online = true }) {
       syncStatus: 'pending',
     }
     const nextBudgets = [localBudget, ...generatedBudgets]
-    const storedQueue = readStored(PENDING_BUDGETS_KEY, [])
+    const storedPendingQueue = await readLocalJson(PENDING_BUDGETS_KEY, [])
+    const storedQueue = Array.isArray(storedPendingQueue) ? storedPendingQueue : []
     const nextQueue = [localBudget, ...storedQueue.filter((item) => item.id !== localBudget.id)]
     const followingNumber = Number(snapshot.number) + 1
     const nextBrands = brands.map((item) => item.id === fallbackBrandId
       ? { ...item, nextNumber: Math.max(Number(item.nextNumber || 1), followingNumber) }
       : item)
 
+    try {
+      await Promise.all([
+        writeLocalJson(BUDGETS_KEY, nextBudgets),
+        writeLocalJson(PENDING_BUDGETS_KEY, nextQueue),
+      ])
+      localStorage.setItem(BRANDS_KEY, JSON.stringify(nextBrands))
+      const nextActiveBrand = nextBrands.find((item) => item.id === fallbackBrandId)
+      if (nextActiveBrand) localStorage.setItem(BRAND_KEY, JSON.stringify(nextActiveBrand))
+    } catch (error) {
+      console.error('No se pudo guardar el presupuesto offline:', error)
+      setNotice('No se pudo guardar el presupuesto en esta computadora. No se modificó la numeración.')
+      return false
+    }
+
     setGeneratedBudgets(nextBudgets)
     setSelectedGeneratedId(localBudget.id)
     setConfirmedBudget(localBudget)
     setBrands(nextBrands)
     setNextNumber(followingNumber)
-    localStorage.setItem(BUDGETS_KEY, JSON.stringify(nextBudgets))
-    localStorage.setItem(PENDING_BUDGETS_KEY, JSON.stringify(nextQueue))
-    localStorage.setItem(BRANDS_KEY, JSON.stringify(nextBrands))
-    const nextActiveBrand = nextBrands.find((item) => item.id === fallbackBrandId)
-    if (nextActiveBrand) localStorage.setItem(BRAND_KEY, JSON.stringify(nextActiveBrand))
     notifyLocalDataChanged()
     playSuccessSound()
     setNotice(`Presupuesto N.º ${String(snapshot.number).padStart(6, '0')} guardado en esta computadora ${reason}. Se sincronizará al recuperar internet.`)
@@ -849,6 +893,10 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory, online = true }) {
   }
 
   const confirmBudget = async () => {
+    if (!offlineStorageReady) {
+      setNotice('Esperá un instante mientras Panadero prepara el almacenamiento local.')
+      return
+    }
     if (!clientDraft && !selectedClient) {
       setNotice('Seleccioná un cliente antes de confirmar el presupuesto.')
       return
@@ -876,7 +924,7 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory, online = true }) {
     }
 
     if (!online) {
-      saveBudgetOnThisComputer(snapshot)
+      await saveBudgetOnThisComputer(snapshot)
       return
     }
 
@@ -895,7 +943,8 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory, online = true }) {
       }
 
       const confirmed = data.budget || snapshot
-      const pending = readStored(PENDING_BUDGETS_KEY, [])
+      const storedPending = await readLocalJson(PENDING_BUDGETS_KEY, [])
+      const pending = Array.isArray(storedPending) ? storedPending : []
       const nextBudgets = mergeBudgets(Array.isArray(data.generatedBudgets) ? data.generatedBudgets : [confirmed, ...generatedBudgets], pending)
       setGeneratedBudgets(nextBudgets)
       setSelectedGeneratedId(confirmed.id)
@@ -915,13 +964,13 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory, online = true }) {
         setNextNumber(followingNumber)
         setBrands((current) => current.map((item) => item.id === brand.id ? { ...item, nextNumber: followingNumber } : item))
       }
-      localStorage.setItem(BUDGETS_KEY, JSON.stringify(nextBudgets))
+      await writeLocalJson(BUDGETS_KEY, nextBudgets)
       notifyLocalDataChanged()
       playSuccessSound()
       setNotice(`Presupuesto N.º ${String(requestedNumber).padStart(6, '0')} confirmado y guardado online.`)
     } catch (error) {
       if (error instanceof TypeError || error.saveLocally || !navigator.onLine) {
-        saveBudgetOnThisComputer(snapshot, 'porque el servidor no respondió')
+        await saveBudgetOnThisComputer(snapshot, 'porque el servidor no respondió')
       } else {
         setNotice(error.message)
       }
@@ -1046,7 +1095,7 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory, online = true }) {
       setGeneratedBudgets(nextBudgets)
       setSelectedGeneratedId(updated.id)
       setConfirmedBudget(updated)
-      localStorage.setItem(BUDGETS_KEY, JSON.stringify(nextBudgets))
+      await writeLocalJson(BUDGETS_KEY, nextBudgets)
       setNotice(`Nota de débito registrada para el presupuesto N.º ${String(updated.number).padStart(6, '0')}.`)
     } catch (error) {
       setNotice(error.message)
@@ -1087,7 +1136,7 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory, online = true }) {
       const nextBudgets = data.generatedBudgets || generatedBudgets
       setGeneratedBudgets(nextBudgets)
       setSelectedGeneratedId(budget.id)
-      localStorage.setItem(BUDGETS_KEY, JSON.stringify(nextBudgets))
+      await writeLocalJson(BUDGETS_KEY, nextBudgets)
       setNotice(`Presupuesto N.º ${String(budget.number).padStart(6, '0')} cancelado correctamente.`)
     } catch (error) { setNotice(error.message) }
   }
@@ -1135,7 +1184,8 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory, online = true }) {
         if (response.status === 409) continue
         if (!response.ok) throw new Error(data.error || 'No se pudo sincronizar el presupuesto.')
 
-        const pending = readStored(PENDING_BUDGETS_KEY, []).filter((item) => item.id !== budget.id)
+        const storedPending = await readLocalJson(PENDING_BUDGETS_KEY, [])
+        const pending = (Array.isArray(storedPending) ? storedPending : []).filter((item) => item.id !== budget.id)
         const nextHistory = mergeBudgets(data.generatedBudgets || [data.budget || replacement], pending)
         const nextBrands = Array.isArray(data.brands) && data.brands.length
           ? data.brands.map((item, index) => normalizeBrandRecord(item, `brand-${index + 1}`))
@@ -1147,8 +1197,10 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory, online = true }) {
         setBrands(nextBrands)
         const currentBrand = nextBrands.find((item) => item.id === targetBrandId)
         if (currentBrand) setNextNumber(Number(currentBrand.nextNumber || replacementNumber + 1))
-        localStorage.setItem(PENDING_BUDGETS_KEY, JSON.stringify(pending))
-        localStorage.setItem(BUDGETS_KEY, JSON.stringify(nextHistory))
+        await Promise.all([
+          writeLocalJson(PENDING_BUDGETS_KEY, pending),
+          writeLocalJson(BUDGETS_KEY, nextHistory),
+        ])
         localStorage.setItem(BRANDS_KEY, JSON.stringify(nextBrands))
         notifyLocalDataChanged()
         setNotice(`Presupuesto local renumerado de ${String(originalNumber).padStart(6, '0')} a ${String(replacementNumber).padStart(6, '0')} y sincronizado.`)

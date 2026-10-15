@@ -226,6 +226,7 @@ assert.throws(() => calculateVatBreakdown(121, 15), /no está configurada/)
 
 const invoicePdfContent = buildInvoicePdf({
   voucher: {
+    voucherType: 1,
     voucherTypeDescription: 'Factura A',
     formattedNumber: '0003-00000030',
     pointOfSale: 3,
@@ -260,6 +261,45 @@ invoiceColumnLabels.forEach((label) => {
 })
 assert.match(invoicePdfContent, /\(30%\)/)
 assert.match(invoicePdfContent, /\(CR30\)/)
+assert.match(invoicePdfContent, /\/Count 2/)
+assert.match(invoicePdfContent, /\(ORIGINAL\)/)
+assert.match(invoicePdfContent, /\(DUPLICADO\)/)
+assert.equal((invoicePdfContent.match(/\(Nro\. 0003-00000030\)/g) || []).length, 2)
+
+const invoiceBPdfContent = buildInvoicePdf({
+  cae: '456',
+  voucher: {
+    voucherType: 6,
+    voucherTypeDescription: 'Factura B',
+    formattedNumber: '0003-00000031',
+    pointOfSale: 3,
+    amount: 121,
+    netAmount: 100,
+    vatAmount: 21,
+    vatRate: 21,
+  },
+  buyer: { name: 'Cliente final', documentType: 'DNI', documentNumber: '12345678' },
+}).toString('latin1')
+assert.match(invoiceBPdfContent, /\/Count 2/)
+assert.match(invoiceBPdfContent, /\(ORIGINAL\)/)
+assert.match(invoiceBPdfContent, /\(DUPLICADO\)/)
+
+const creditNotePdfContent = buildInvoicePdf({
+  cae: '789',
+  voucher: {
+    voucherType: 3,
+    voucherTypeDescription: 'Nota de credito A',
+    formattedNumber: '0003-00000032',
+    pointOfSale: 3,
+    amount: 121,
+    netAmount: 100,
+    vatAmount: 21,
+    vatRate: 21,
+  },
+  buyer: { name: 'ABRAFER SRL', documentType: 'CUIT', documentNumber: '30681599793' },
+}).toString('latin1')
+assert.match(creditNotePdfContent, /\/Count 1/)
+assert.doesNotMatch(creditNotePdfContent, /\(DUPLICADO\)/)
 
 const facturaA = {
   cae: '123',

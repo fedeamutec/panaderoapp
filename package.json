@@ -9,7 +9,7 @@
     "dev:server": "node --watch server/index.js",
     "start:server": "node server/index.js",
     "build": "vite build",
-    "test": "node server/fiscal.test.js && node server/budgetsStore.test.js",
+    "test": "node server/fiscal.test.js && node server/budgetsStore.test.js && node src/utils/localBackup.test.js",
     "lint": "eslint .",
     "preview": "vite preview"
   },

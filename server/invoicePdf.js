@@ -476,14 +476,33 @@ export function buildInvoicePdf(invoice) {
   commands.push('q 0 g 92 0 0 21 48 20 cm /Logo Do Q')
   commands.push('BT /F1 7 Tf 148 27 Td (Gestion inteligente) Tj ET')
 
-  const content = commands.join('\n')
+  const baseContent = commands.join('\n')
+  const fiscalInvoiceCopies = [1, 6].includes(Number(voucher.voucherType))
+    ? ['ORIGINAL', 'DUPLICADO']
+    : ['']
+  const pageContents = fiscalInvoiceCopies.map((copyLabel) => copyLabel
+    ? `BT /F2 9 Tf 360 820 Td (${copyLabel}) Tj ET\n${baseContent}`
+    : baseContent)
+
+  const pageCount = pageContents.length
+  const pageIds = pageContents.map((_, index) => 3 + index)
+  const regularFontId = 3 + pageCount
+  const boldFontId = regularFontId + 1
+  const firstContentId = boldFontId + 1
+  const logoId = firstContentId + pageCount
+  const pageObjects = pageContents.map((_, index) => (
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 ${regularFontId} 0 R /F2 ${boldFontId} 0 R >> /XObject << /Logo ${logoId} 0 R >> >> /Contents ${firstContentId + index} 0 R >>`
+  ))
+  const contentObjects = pageContents.map((content) => (
+    `<< /Length ${Buffer.byteLength(content, 'latin1')} >>\nstream\n${content}\nendstream`
+  ))
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> /XObject << /Logo 7 0 R >> >> /Contents 6 0 R >>',
+    `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(' ')}] /Count ${pageCount} >>`,
+    ...pageObjects,
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>',
-    `<< /Length ${Buffer.byteLength(content, 'latin1')} >>\nstream\n${content}\nendstream`,
+    ...contentObjects,
     `<< /Type /XObject /Subtype /Image /Width ${PANADERO_LOGO_WIDTH} /Height ${PANADERO_LOGO_HEIGHT} /ImageMask true /BitsPerComponent 1 /Decode [1 0] /Filter /ASCIIHexDecode /Length ${PANADERO_LOGO_HEX.length} >>\nstream\n${PANADERO_LOGO_HEX}\nendstream`,
   ]
 

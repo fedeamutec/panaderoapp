@@ -1,7 +1,14 @@
 const DB_NAME = 'panadero-local-backups'
-const DB_VERSION = 1
+const DB_VERSION = 2
 const STORE_NAME = 'snapshots'
+const DATA_STORE_NAME = 'offline-data'
 const RESTORE_PENDING_KEY = 'panadero-backup-restore-pending'
+let persistenceRequested = false
+
+const INDEXED_DATA_KEYS = new Set([
+  'panadero-generated-budgets',
+  'panadero-pending-budgets',
+])
 
 export const PANADERO_DATA_KEYS = [
   'panadero-budget-clients',
@@ -30,27 +37,118 @@ function openDatabase() {
       if (!database.objectStoreNames.contains(STORE_NAME)) {
         database.createObjectStore(STORE_NAME, { keyPath: 'id' })
       }
+      if (!database.objectStoreNames.contains(DATA_STORE_NAME)) {
+        database.createObjectStore(DATA_STORE_NAME, { keyPath: 'key' })
+      }
     }
     request.onsuccess = () => resolve(request.result)
     request.onerror = () => reject(request.error || new Error('No se pudo abrir el respaldo local.'))
   })
 }
 
-function readCurrentData() {
-  return PANADERO_DATA_KEYS.reduce((data, key) => {
-    const value = localStorage.getItem(key)
+async function requestPersistentStorage() {
+  if (persistenceRequested) return
+  persistenceRequested = true
+  try {
+    await globalThis.navigator?.storage?.persist?.()
+  } catch {
+    // IndexedDB sigue disponible aunque el navegador no conceda persistencia especial.
+  }
+}
+
+async function readIndexedValue(key) {
+  const database = await openDatabase()
+  const record = await new Promise((resolve, reject) => {
+    const request = database.transaction(DATA_STORE_NAME, 'readonly').objectStore(DATA_STORE_NAME).get(key)
+    request.onsuccess = () => resolve(request.result || null)
+    request.onerror = () => reject(request.error || new Error('No se pudo leer el almacenamiento offline.'))
+  })
+  database.close()
+  return record?.value ?? null
+}
+
+async function writeIndexedValue(key, value) {
+  const database = await openDatabase()
+  await new Promise((resolve, reject) => {
+    const transaction = database.transaction(DATA_STORE_NAME, 'readwrite')
+    transaction.objectStore(DATA_STORE_NAME).put({ key, value })
+    transaction.oncomplete = () => resolve()
+    transaction.onerror = () => reject(transaction.error || new Error('No se pudo guardar el almacenamiento offline.'))
+  })
+  database.close()
+}
+
+async function removeIndexedValue(key) {
+  const database = await openDatabase()
+  await new Promise((resolve, reject) => {
+    const transaction = database.transaction(DATA_STORE_NAME, 'readwrite')
+    transaction.objectStore(DATA_STORE_NAME).delete(key)
+    transaction.oncomplete = () => resolve()
+    transaction.onerror = () => reject(transaction.error || new Error('No se pudo limpiar el almacenamiento offline.'))
+  })
+  database.close()
+}
+
+export async function readLocalDataValue(key) {
+  if (!INDEXED_DATA_KEYS.has(key)) return localStorage.getItem(key)
+
+  const indexedValue = await readIndexedValue(key)
+  if (indexedValue !== null) return indexedValue
+
+  const legacyValue = localStorage.getItem(key)
+  if (legacyValue !== null) {
+    await writeIndexedValue(key, legacyValue)
+    localStorage.removeItem(key)
+  }
+  return legacyValue
+}
+
+export async function writeLocalDataValue(key, value) {
+  const serialized = String(value)
+  if (!INDEXED_DATA_KEYS.has(key)) {
+    localStorage.setItem(key, serialized)
+    return
+  }
+
+  await writeIndexedValue(key, serialized)
+  localStorage.removeItem(key)
+}
+
+async function removeLocalDataValue(key) {
+  localStorage.removeItem(key)
+  if (INDEXED_DATA_KEYS.has(key)) await removeIndexedValue(key)
+}
+
+export async function readLocalJson(key, fallback) {
+  try {
+    const stored = await readLocalDataValue(key)
+    if (stored === null) return fallback
+    const parsed = JSON.parse(stored)
+    return parsed ?? fallback
+  } catch {
+    return fallback
+  }
+}
+
+export async function writeLocalJson(key, value) {
+  await writeLocalDataValue(key, JSON.stringify(value))
+}
+
+async function readCurrentData() {
+  const entries = await Promise.all(PANADERO_DATA_KEYS.map(async (key) => [key, await readLocalDataValue(key)]))
+  return entries.reduce((data, [key, value]) => {
     if (value !== null) data[key] = value
     return data
   }, {})
 }
 
-function backupPayload(reason = 'manual') {
+async function backupPayload(reason = 'manual') {
   return {
     app: 'panadero',
     formatVersion: 1,
     createdAt: new Date().toISOString(),
     reason,
-    data: readCurrentData(),
+    data: await readCurrentData(),
   }
 }
 
@@ -67,10 +165,10 @@ function validatePayload(payload) {
   return payload
 }
 
-function writeData(payload) {
+async function writeData(payload) {
   const valid = validatePayload(payload)
-  PANADERO_DATA_KEYS.forEach((key) => localStorage.removeItem(key))
-  Object.entries(valid.data).forEach(([key, value]) => localStorage.setItem(key, value))
+  await Promise.all(PANADERO_DATA_KEYS.map((key) => removeLocalDataValue(key)))
+  await Promise.all(Object.entries(valid.data).map(([key, value]) => writeLocalDataValue(key, value)))
   localStorage.setItem(RESTORE_PENDING_KEY, new Date().toISOString())
   window.dispatchEvent(new CustomEvent('panadero:data-restored'))
 }
@@ -84,7 +182,8 @@ export function clearPendingRestore() {
 }
 
 export async function createLocalSnapshot(reason = 'automatic') {
-  const payload = backupPayload(reason)
+  await requestPersistentStorage()
+  const payload = await backupPayload(reason)
   const database = await openDatabase()
   await new Promise((resolve, reject) => {
     const transaction = database.transaction(STORE_NAME, 'readwrite')
@@ -110,7 +209,7 @@ export async function getLatestLocalSnapshot() {
 export async function restoreLatestLocalSnapshot() {
   const snapshot = await getLatestLocalSnapshot()
   if (!snapshot) throw new Error('Todavía no hay un respaldo automático en esta computadora.')
-  writeData(snapshot)
+  await writeData(snapshot)
   return snapshot
 }
 
@@ -119,7 +218,7 @@ export async function downloadLocalBackup() {
   try {
     payload = await createLocalSnapshot('manual-export')
   } catch {
-    payload = backupPayload('manual-export')
+    payload = await backupPayload('manual-export')
   }
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' })
   const url = URL.createObjectURL(blob)
@@ -142,7 +241,7 @@ export async function restoreLocalBackupFile(file) {
   } catch {
     throw new Error('No se pudo leer el archivo de respaldo.')
   }
-  writeData(payload)
+  await writeData(payload)
   try {
     await createLocalSnapshot('file-restore')
   } catch {
