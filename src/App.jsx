@@ -90,10 +90,10 @@ function App() {
       {activeSection === 'inicio' ? (
         <Dashboard onNavigate={setActiveSection} />
       ) : activeSection === 'presupuestos' ? (
-        <Budgets />
+        <Budgets key="presupuesto" />
       ) : activeSection === 'facturas' ? (
         invoiceView === 'new'
-          ? <Budgets mode="invoice" onShowInvoiceHistory={() => setInvoiceView('history')} />
+          ? <Budgets key="factura" mode="invoice" onShowInvoiceHistory={() => setInvoiceView('history')} />
           : <Invoices onNavigateToSales={() => setActiveSection('ventas')} onCreateInvoice={() => setInvoiceView('new')} />
       ) : activeSection === 'arca' ? (
         <ArcaSettings />

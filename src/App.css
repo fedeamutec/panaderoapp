@@ -2392,39 +2392,45 @@ body,
   padding-bottom:12px;
 }
 .invoice-builder-workspace .budget-item-card.invoice-line{
-  grid-template-columns:minmax(210px,2fr) minmax(88px,.72fr) minmax(90px,.7fr) minmax(92px,.74fr) minmax(78px,.58fr) minmax(98px,.8fr) minmax(76px,.56fr) minmax(104px,.86fr) 28px;
-  align-items:start;
-  gap:10px;
-  min-height:76px;
-  padding:11px 12px 11px 13px;
+  grid-template-columns:minmax(150px,1.65fr) minmax(68px,.62fr) 76px minmax(76px,.7fr) 68px minmax(78px,.74fr) 58px minmax(84px,.8fr) 24px;
+  align-items:end;
+  gap:6px;
+  min-height:58px;
+  padding:8px 9px;
 }
 .invoice-builder-workspace .budget-item-card.invoice-line > label{
   min-width:0;
   text-align:right;
 }
 .invoice-builder-workspace .budget-item-card.invoice-line > label span{
-  min-height:13px;
+  min-height:10px;
+  font-size:calc(7px * var(--font-scale));
   white-space:nowrap;
 }
 .invoice-builder-workspace .budget-item-card.invoice-line > label strong{
   display:flex;
-  min-height:34px;
+  min-height:29px;
   align-items:center;
   justify-content:flex-end;
-  margin-top:4px;
+  margin-top:2px;
+  font-size:calc(9px * var(--font-scale));
   white-space:nowrap;
 }
 .invoice-builder-workspace .budget-item-card.invoice-line input,
 .invoice-builder-workspace .budget-item-card.invoice-line select{
-  height:34px;
+  height:29px;
+  margin-top:2px;
+  padding-right:6px;
+  padding-left:6px;
+  font-size:calc(8px * var(--font-scale));
 }
 .invoice-builder-workspace .budget-item-name{
   min-width:0;
 }
 .invoice-builder-workspace .budget-item-name strong{
   display:-webkit-box;
-  min-height:34px;
-  margin-top:4px;
+  min-height:29px;
+  margin-top:2px;
   overflow:hidden;
   line-height:1.35;
   overflow-wrap:anywhere;
@@ -2459,18 +2465,8 @@ body,
 }
 @media(max-width:1700px){
   .invoice-builder-workspace .budget-item-card.invoice-line{
-    grid-template-columns:minmax(180px,2fr) repeat(3,minmax(82px,1fr)) 26px;
-    gap:6px 8px;
-    min-height:0;
-    padding:8px 9px;
+    grid-template-columns:minmax(140px,1.55fr) minmax(64px,.62fr) 72px minmax(72px,.68fr) 66px minmax(76px,.72fr) 56px minmax(82px,.78fr) 24px;
   }
-  .invoice-builder-workspace .budget-item-card.invoice-line .budget-item-name{grid-column:span 2}
-  .invoice-builder-workspace .budget-item-card.invoice-line .budget-remove-item{grid-column:5;grid-row:1}
-  .invoice-builder-workspace .budget-item-card.invoice-line > label span{min-height:10px;font-size:calc(7px * var(--font-scale))}
-  .invoice-builder-workspace .budget-item-card.invoice-line > label strong{min-height:29px;margin-top:2px;font-size:calc(9px * var(--font-scale))}
-  .invoice-builder-workspace .budget-item-card.invoice-line input,
-  .invoice-builder-workspace .budget-item-card.invoice-line select{height:29px;margin-top:2px;font-size:calc(8px * var(--font-scale))}
-  .invoice-builder-workspace .budget-item-name strong{min-height:29px;margin-top:2px;font-size:calc(10px * var(--font-scale))}
 }
 @media(max-width:1180px){
   .invoice-builder-workspace .budget-columns,
