@@ -1504,8 +1504,9 @@ body,
 .budget-paper-client > strong { display:block; margin:3px 0; font-size:13px; }
 .budget-paper-table { margin-top:24px; }
 .budget-paper-row { display:grid; grid-template-columns:.6fr 2fr .85fr .55fr .85fr .45fr .9fr; gap:8px; padding:10px 6px; border-bottom:1px solid #e6e6e6; font-size:8px; }
-.budget-paper-row.invoice { grid-template-columns:.55fr 1.55fr .78fr .48fr .42fr .82fr .38fr .82fr; }
+.budget-paper-row.invoice { grid-template-columns:.5fr 1.65fr .82fr .52fr .44fr .78fr .38fr .9fr; }
 .budget-paper-row.heading { color:#666; background:#f4f4f4; border-bottom:1px solid #bbb; font-size:7px; font-weight:800; text-transform:uppercase; }
+.budget-paper-row.heading small { font-size:inherit; font-weight:inherit; }
 .budget-paper-row span:nth-child(n+3) { text-align:right; }
 .budget-paper-empty { padding:50px 12px; color:#999; border-bottom:1px solid #ddd; font-size:10px; text-align:center; }
 .budget-paper-footer { display:flex; align-items:flex-end; justify-content:space-between; gap:28px; margin-top:30px; padding-top:20px; border-top:1px solid #ddd; }
@@ -2392,7 +2393,7 @@ body,
   padding-bottom:12px;
 }
 .invoice-builder-workspace .budget-item-card.invoice-line{
-  grid-template-columns:minmax(150px,1.65fr) minmax(68px,.62fr) 76px minmax(76px,.7fr) 68px minmax(78px,.74fr) 58px minmax(84px,.8fr) 24px;
+  grid-template-columns:minmax(55px,.48fr) minmax(150px,1.6fr) minmax(82px,.76fr) 76px 58px minmax(82px,.76fr) 68px minmax(94px,.86fr) 24px;
   align-items:end;
   gap:6px;
   min-height:58px;
@@ -2427,6 +2428,27 @@ body,
 .invoice-builder-workspace .budget-item-name{
   min-width:0;
 }
+.invoice-builder-workspace .invoice-item-code{
+  min-width:0;
+}
+.invoice-builder-workspace .invoice-item-code small,
+.invoice-builder-workspace .invoice-item-code strong{
+  display:block;
+}
+.invoice-builder-workspace .invoice-item-code small{
+  color:var(--muted);
+  font-size:calc(7px * var(--font-scale));
+  letter-spacing:.04em;
+}
+.invoice-builder-workspace .invoice-item-code strong{
+  min-height:29px;
+  margin-top:2px;
+  overflow:hidden;
+  font-size:calc(9px * var(--font-scale));
+  line-height:29px;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
 .invoice-builder-workspace .budget-item-name strong{
   display:-webkit-box;
   min-height:29px;
@@ -2436,6 +2458,18 @@ body,
   overflow-wrap:anywhere;
   -webkit-box-orient:vertical;
   -webkit-line-clamp:2;
+}
+.invoice-builder-workspace .invoice-usd-meta{
+  display:flex;
+  align-items:center;
+  gap:4px;
+  white-space:nowrap;
+}
+.invoice-builder-workspace .budget-item-card.invoice-line .invoice-usd-meta input{
+  width:42px;
+  height:20px;
+  margin:0;
+  padding:0 4px;
 }
 .invoice-builder-workspace .budget-item-card.invoice-line .budget-remove-item{
   position:static;
@@ -2465,7 +2499,7 @@ body,
 }
 @media(max-width:1700px){
   .invoice-builder-workspace .budget-item-card.invoice-line{
-    grid-template-columns:minmax(140px,1.55fr) minmax(64px,.62fr) 72px minmax(72px,.68fr) 66px minmax(76px,.72fr) 56px minmax(82px,.78fr) 24px;
+    grid-template-columns:minmax(52px,.46fr) minmax(140px,1.5fr) minmax(78px,.72fr) 72px 56px minmax(78px,.72fr) 66px minmax(88px,.82fr) 24px;
   }
 }
 @media(max-width:1180px){
@@ -2480,6 +2514,7 @@ body,
   .invoice-builder-workspace .budget-clients-column{display:none}
   .invoice-builder-workspace .budget-document-stack{grid-column:1}
   .invoice-builder-workspace .budget-item-card.invoice-line{grid-template-columns:repeat(2,minmax(0,1fr)) 28px}
+  .invoice-builder-workspace .budget-item-card.invoice-line .invoice-item-code{grid-column:1;grid-row:1}
   .invoice-builder-workspace .budget-item-card.invoice-line .budget-item-name{grid-column:1 / span 2}
   .invoice-builder-workspace .budget-item-card.invoice-line .budget-remove-item{grid-column:3;grid-row:1}
 }

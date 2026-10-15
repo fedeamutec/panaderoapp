@@ -135,7 +135,25 @@ function sellerName(invoice = {}, store = null) {
 }
 
 function normalizeItem(item = {}) {
+  const quantity = Math.max(1, Number(item.quantity || item.qty || 1))
+  const vatRate = Number.isFinite(Number(item.vatRate)) ? Number(item.vatRate) : 21
+  const unitPrice = Number(item.unitPrice ?? item.unit_price ?? item.price ?? item.totalPrice ?? 0)
+  const netUnitPrice = Number(item.netUnitPrice ?? (unitPrice / (1 + vatRate / 100)))
+  const listNetUnitPrice = Number(item.listNetUnitPrice ?? item.priceBeforeDiscount ?? netUnitPrice)
+  const calculatedDiscount = listNetUnitPrice > 0
+    ? Math.max(0, (1 - netUnitPrice / listNetUnitPrice) * 100)
+    : 0
+  const discountLabel = String(
+    item.discountLabel ?? item.discount ?? `${String(Number(calculatedDiscount.toFixed(2))).replace('.', ',')}%`,
+  )
   return {
+    code:
+      item.code ||
+      item.sku ||
+      item.sellerSku ||
+      item.item?.seller_sku ||
+      item.item?.id ||
+      '',
     title:
       item.title ||
       item.name ||
@@ -144,8 +162,14 @@ function normalizeItem(item = {}) {
       item.productName ||
       item.description ||
       'Producto',
-    quantity: Number(item.quantity || item.qty || 1),
-    unitPrice: Number(item.unitPrice || item.unit_price || item.price || item.totalPrice || 0),
+    quantity,
+    vatRate,
+    discountLabel,
+    listNetUnitPrice,
+    netUnitPrice,
+    netSubtotal: Number(item.netSubtotal ?? (netUnitPrice * quantity)),
+    unitPrice,
+    subtotal: Number(item.subtotal ?? (unitPrice * quantity)),
   }
 }
 
@@ -319,6 +343,16 @@ export function buildInvoicePdf(invoice) {
     y -= 17
   }
 
+  const drawAt = (value, x, atY, size = 7, bold = false) => {
+    commands.push(`BT /${bold ? 'F2' : 'F1'} ${size} Tf ${x} ${atY} Td (${escapePdf(value)}) Tj ET`)
+  }
+
+  const drawRight = (value, right, atY, size = 7, bold = false) => {
+    const cleaned = cleanText(value)
+    const estimatedWidth = cleaned.length * size * (bold ? 0.54 : 0.5)
+    drawAt(cleaned, Math.max(48, right - estimatedWidth), atY, size, bold)
+  }
+
   text(accountName, 48, 22, true)
   text('Comprobante electronico autorizado por ARCA', 48, 9)
   y += 37
@@ -360,18 +394,56 @@ export function buildInvoicePdf(invoice) {
   text('DETALLE', 48, 11, true)
 
   if (items.length) {
+    const tableLeft = 48
+    const tableRight = 547
+    const columnEdges = [48, 86, 218, 279, 324, 362, 423, 458, 547]
+    const headerTop = y + 4
+    const headerBottom = headerTop - 30
+
+    commands.push(`0.94 g ${tableLeft} ${headerBottom} ${tableRight - tableLeft} ${headerTop - headerBottom} re f 0 g`)
+    commands.push(`0.72 G ${tableLeft} ${headerTop} m ${tableRight} ${headerTop} l S`)
+    commands.push(`0.72 G ${tableLeft} ${headerBottom} m ${tableRight} ${headerBottom} l S`)
+    columnEdges.forEach((edge) => commands.push(`0.72 G ${edge} ${headerBottom} m ${edge} ${headerTop} l S`))
+
+    drawAt('CODIGO', 51, headerBottom + 11, 6, true)
+    drawAt('PRODUCTO', 89, headerBottom + 11, 6, true)
+    drawRight('PRECIO NETO', 276, headerBottom + 17, 5.2, true)
+    drawRight('(SIN DESCUENTO)', 276, headerBottom + 8, 4, true)
+    drawRight('DESCUENTO', 321, headerBottom + 11, 4.7, true)
+    drawRight('CANTIDAD', 359, headerBottom + 11, 4.8, true)
+    drawRight('SUBTOTAL', 420, headerBottom + 11, 5.2, true)
+    drawRight('IVA', 455, headerBottom + 11, 5.5, true)
+    drawRight('SUBTOTAL', 544, headerBottom + 17, 5.5, true)
+    drawRight('CON IVA', 544, headerBottom + 8, 5.5, true)
+
+    let rowTop = headerBottom
     items.slice(0, 10).forEach((item) => {
-      const quantity = Number(item.quantity || 1)
-      const unitPrice = Number(item.unitPrice || 0)
-      wrapText(`${quantity} x ${item.title || 'Producto'}`, 68).forEach((itemLine, index) => {
-        text(itemLine, 48, index === 0 ? 9 : 8)
-      })
-      if (unitPrice > 0) {
-        text(money(unitPrice * quantity), 430, 9, true)
-        text(`Neto unitario ${money(item.netUnitPrice || unitPrice)} · IVA ${Number(item.vatRate || voucher.vatRate || 21)}% · Unitario con IVA ${money(unitPrice)}`, 48, 7)
-        y += 15
+      const quantity = Math.max(1, Number(item.quantity || 1))
+      const vatRate = Number(item.vatRate || voucher.vatRate || 21)
+      const listNetUnitPrice = Number(item.listNetUnitPrice ?? item.netUnitPrice ?? 0)
+      const netSubtotal = Number(item.netSubtotal ?? (Number(item.netUnitPrice || 0) * quantity))
+      const subtotalWithVat = Number(item.subtotal ?? (Number(item.unitPrice || 0) * quantity))
+      const wrappedProduct = wrapText(item.title || 'Producto', 23)
+      const productLines = wrappedProduct.slice(0, 2)
+      if (wrappedProduct.length > 2) {
+        productLines[1] = `${productLines[1].slice(0, Math.max(0, productLines[1].length - 3))}...`
       }
+      const rowHeight = productLines.length > 1 ? 30 : 23
+      const baseline = rowTop - 14
+      const rowBottom = rowTop - rowHeight
+
+      drawAt(cleanText(item.code || '').slice(0, 10) || '—', 51, baseline, 6.5)
+      productLines.forEach((productLine, index) => drawAt(productLine, 89, baseline - index * 9, 6.2, index === 0))
+      drawRight(money(listNetUnitPrice), 276, baseline, 5.9)
+      drawRight(item.discountLabel || '0%', 321, baseline, 6.2)
+      drawRight(String(quantity).replace('.', ','), 359, baseline, 6.3)
+      drawRight(money(netSubtotal), 420, baseline, 5.9)
+      drawRight(`${String(vatRate).replace('.', ',')}%`, 455, baseline, 6.2)
+      drawRight(money(subtotalWithVat), 544, baseline, 6.3, true)
+      commands.push(`0.86 G ${tableLeft} ${rowBottom} m ${tableRight} ${rowBottom} l S`)
+      rowTop = rowBottom
     })
+    y = rowTop - 12
   } else {
     text('Producto', 48, 9)
   }

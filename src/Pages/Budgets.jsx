@@ -221,6 +221,18 @@ function budgetTotal(items) {
   return items.reduce((sum, item) => sum + Number(item.subtotal || 0), 0)
 }
 
+function invoiceNetUnitPrice(item) {
+  const vatRate = numberValue(item.vatRate, 21)
+  return numberValue(
+    item.netDiscountedPrice,
+    numberValue(item.discountedPrice) / (1 + vatRate / 100),
+  )
+}
+
+function invoiceNetSubtotal(item) {
+  return invoiceNetUnitPrice(item) * Math.max(1, numberValue(item.quantity, 1))
+}
+
 function Preview({ brand, client, items, number, draft = false, documentType = 'budget', authorized = false }) {
   const total = items.reduce((sum, item) => sum + item.subtotal, 0)
   const isInvoice = documentType === 'invoice-a' || documentType === 'invoice-b'
@@ -258,23 +270,26 @@ function Preview({ brand, client, items, number, draft = false, documentType = '
       <div className="budget-paper-table">
         <div className={`budget-paper-row heading ${isInvoice ? 'invoice' : ''}`}>
           {isInvoice
-            ? <><span>Código</span><span>Producto</span><span>Neto s/IVA</span><span>Desc.</span><span>IVA</span><span>Precio c/IVA</span><span>Cant.</span><span>Subtotal</span></>
+            ? <><span>Código</span><span>Producto</span><span>Precio neto<br /><small>sin descuento</small></span><span>Descuento</span><span>Cantidad</span><span>Subtotal</span><span>IVA</span><span>Subtotal c/IVA</span></>
             : <><span>Código</span><span>Producto</span><span>Precio</span><span>Desc.</span><span>Precio final</span><span>Cant.</span><span>Subtotal</span></>}
         </div>
-        {items.length ? items.map((item) => (
-          <div className={`budget-paper-row ${isInvoice ? 'invoice' : ''}`} key={item.rowId}>
-            {isInvoice ? (
-              <>
-                <span>{item.code}</span><span>{item.name}</span>
-                <span>{formatCurrency(Number(item.discountedPrice || 0) / (1 + numberValue(item.vatRate, 21) / 100))}</span>
-                <span>{item.discountLabel}</span><span>{numberValue(item.vatRate, 21)}%</span>
-                <span>{formatCurrency(item.discountedPrice)}</span><span>{item.quantity}</span><span>{formatCurrency(item.subtotal)}</span>
-              </>
-            ) : (
-              <><span>{item.code}</span><span>{item.name}</span><span>{formatCurrency(item.price)}</span><span>{item.discountLabel}</span><span>{formatCurrency(item.discountedPrice)}</span><span>{item.quantity}</span><span>{formatCurrency(item.subtotal)}</span></>
-            )}
-          </div>
-        )) : <div className="budget-paper-empty">Agregá productos para comenzar el presupuesto.</div>}
+        {items.length ? items.map((item) => {
+          const quantity = Math.max(1, numberValue(item.quantity, 1))
+          const vatRate = numberValue(item.vatRate, 21)
+
+          return (
+            <div className={`budget-paper-row ${isInvoice ? 'invoice' : ''}`} key={item.rowId}>
+              {isInvoice ? (
+                <>
+                  <span>{item.code}</span><span>{item.name}</span><span>{formatCurrency(item.price)}</span>
+                  <span>{item.discountLabel}</span><span>{quantity}</span><span>{formatCurrency(invoiceNetSubtotal(item))}</span><span>{vatRate}%</span><span>{formatCurrency(item.subtotal)}</span>
+                </>
+              ) : (
+                <><span>{item.code}</span><span>{item.name}</span><span>{formatCurrency(item.price)}</span><span>{item.discountLabel}</span><span>{formatCurrency(item.discountedPrice)}</span><span>{item.quantity}</span><span>{formatCurrency(item.subtotal)}</span></>
+              )}
+            </div>
+          )
+        }) : <div className="budget-paper-empty">Agregá productos para comenzar el presupuesto.</div>}
       </div>
 
       <footer className="budget-paper-footer">
@@ -1550,16 +1565,38 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory, online = true }) {
             <div className="budget-item-editor">
               {items.map((item) => (
                 <div className={`budget-item-card ${invoiceMode ? 'invoice-line' : ''}`} key={item.rowId}>
-                  <div className="budget-item-name"><small>{item.code}{item.currency === 'USD' ? ' · USD' : ''}</small><strong>{item.name}</strong>{item.currency === 'USD' && <em>Catálogo USD {Number(item.basePrice).toLocaleString('es-AR', { maximumFractionDigits: 2 })}</em>}</div>
-                  {item.currency === 'USD' && <label className="internal-price"><span>Dólar venta</span><strong>{formatCurrency(item.fxSale)}</strong></label>}
-                  {item.currency === 'USD' && <label className="internal-price"><span>Ganancia</span><input type="number" min="0" step="0.1" value={item.profitRate} onChange={(event) => updateItem(item.rowId, 'profitRate', event.target.value)} /></label>}
-                  <label><span>Precio</span><strong>{formatCurrency(item.price)}</strong></label>
-                  <label><span>Descuento</span><input value={item.discountLabel} onChange={(event) => updateItem(item.rowId, 'discountLabel', event.target.value)} /></label>
-                  <label><span>{invoiceMode ? 'Precio neto' : 'Precio final'}</span><strong>{formatCurrency(invoiceMode ? (item.netDiscountedPrice ?? (item.discountedPrice / (1 + numberValue(item.vatRate, 21) / 100))) : item.discountedPrice)}</strong></label>
-                  {invoiceMode && <label><span>IVA</span><select value={numberValue(item.vatRate, 21)} onChange={(event) => updateItem(item.rowId, 'vatRate', event.target.value)}><option value="21">21%</option><option value="10.5">10,5%</option></select></label>}
-                  {invoiceMode && <label><span>Precio c/IVA</span><strong>{formatCurrency(item.discountedPrice)}</strong></label>}
-                  <label><span>Cantidad</span><input type="number" min="1" value={item.quantity} onChange={(event) => updateItem(item.rowId, 'quantity', event.target.value)} /></label>
-                  <label><span>Subtotal</span><strong>{formatCurrency(item.subtotal)}</strong></label>
+                  {invoiceMode ? (
+                    <>
+                      <div className="invoice-item-code"><small>Código</small><strong>{item.code}</strong></div>
+                      <div className="budget-item-name">
+                        <small>Producto{item.currency === 'USD' ? ' · USD' : ''}</small>
+                        <strong>{item.name}</strong>
+                        {item.currency === 'USD' && (
+                          <em className="invoice-usd-meta">
+                            USD {Number(item.basePrice).toLocaleString('es-AR', { maximumFractionDigits: 2 })} · Dólar {formatCurrency(item.fxSale)} · Ganancia
+                            <input aria-label={`Ganancia de ${item.name}`} type="number" min="0" step="0.1" value={item.profitRate} onChange={(event) => updateItem(item.rowId, 'profitRate', event.target.value)} />%
+                          </em>
+                        )}
+                      </div>
+                      <label><span>Precio neto s/desc.</span><strong>{formatCurrency(item.price)}</strong></label>
+                      <label><span>Descuento</span><input value={item.discountLabel} onChange={(event) => updateItem(item.rowId, 'discountLabel', event.target.value)} /></label>
+                      <label><span>Cantidad</span><input type="number" min="1" value={item.quantity} onChange={(event) => updateItem(item.rowId, 'quantity', event.target.value)} /></label>
+                      <label><span>Subtotal</span><strong>{formatCurrency(invoiceNetSubtotal(item))}</strong></label>
+                      <label><span>IVA</span><select value={numberValue(item.vatRate, 21)} onChange={(event) => updateItem(item.rowId, 'vatRate', event.target.value)}><option value="21">21%</option><option value="10.5">10,5%</option></select></label>
+                      <label><span>Subtotal c/IVA</span><strong>{formatCurrency(item.subtotal)}</strong></label>
+                    </>
+                  ) : (
+                    <>
+                      <div className="budget-item-name"><small>{item.code}{item.currency === 'USD' ? ' · USD' : ''}</small><strong>{item.name}</strong>{item.currency === 'USD' && <em>Catálogo USD {Number(item.basePrice).toLocaleString('es-AR', { maximumFractionDigits: 2 })}</em>}</div>
+                      {item.currency === 'USD' && <label className="internal-price"><span>Dólar venta</span><strong>{formatCurrency(item.fxSale)}</strong></label>}
+                      {item.currency === 'USD' && <label className="internal-price"><span>Ganancia</span><input type="number" min="0" step="0.1" value={item.profitRate} onChange={(event) => updateItem(item.rowId, 'profitRate', event.target.value)} /></label>}
+                      <label><span>Precio</span><strong>{formatCurrency(item.price)}</strong></label>
+                      <label><span>Descuento</span><input value={item.discountLabel} onChange={(event) => updateItem(item.rowId, 'discountLabel', event.target.value)} /></label>
+                      <label><span>Precio final</span><strong>{formatCurrency(item.discountedPrice)}</strong></label>
+                      <label><span>Cantidad</span><input type="number" min="1" value={item.quantity} onChange={(event) => updateItem(item.rowId, 'quantity', event.target.value)} /></label>
+                      <label><span>Subtotal</span><strong>{formatCurrency(item.subtotal)}</strong></label>
+                    </>
+                  )}
                   <button type="button" className="budget-remove-item" onClick={() => { invalidateConfirmation(); setItems((current) => current.filter((currentItem) => currentItem.rowId !== item.rowId)) }}>×</button>
                 </div>
               ))}

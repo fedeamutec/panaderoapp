@@ -76,15 +76,21 @@ function documentIdentity(client = {}) {
 function commercialInvoiceItems(items = []) {
   return (Array.isArray(items) ? items : []).map((item) => {
     const vatRate = Number.isFinite(Number(item.vatRate)) ? Number(item.vatRate) : 21
+    const quantity = Math.max(1, Number(item.quantity) || 1)
     const unitPrice = Number(item.discountedPrice ?? item.unitPrice ?? item.price ?? 0)
+    const netUnitPrice = Number(item.netDiscountedPrice ?? (unitPrice / (1 + vatRate / 100)))
+    const listNetUnitPrice = Number(item.price ?? item.listNetUnitPrice ?? netUnitPrice)
     return {
       code: String(item.code || ''),
       title: String(item.name || item.title || 'Producto'),
-      quantity: Math.max(1, Number(item.quantity) || 1),
+      quantity,
       vatRate,
-      netUnitPrice: Math.round((unitPrice / (1 + vatRate / 100) + Number.EPSILON) * 100) / 100,
+      discountLabel: String(item.discountLabel || '0%'),
+      listNetUnitPrice: Math.round((listNetUnitPrice + Number.EPSILON) * 100) / 100,
+      netUnitPrice: Math.round((netUnitPrice + Number.EPSILON) * 100) / 100,
+      netSubtotal: Math.round((netUnitPrice * quantity + Number.EPSILON) * 100) / 100,
       unitPrice,
-      subtotal: Number(item.subtotal || 0),
+      subtotal: Number(item.subtotal ?? (unitPrice * quantity)),
     }
   })
 }

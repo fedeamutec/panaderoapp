@@ -10,6 +10,7 @@ import {
   originalInvoiceFiscalData,
 } from './arca/wsfe.js'
 import { normalizeCuit } from './arca/padron.js'
+import { buildInvoicePdf } from './invoicePdf.js'
 
 assert.equal(normalizeCuit('20-36607695-7'), '20366076957')
 assert.equal(normalizeCuit('203660957'), '')
@@ -222,6 +223,43 @@ assert.deepEqual(calculateVatBreakdown(110.5, 10.5), {
   vatAmount: 10.5,
 })
 assert.throws(() => calculateVatBreakdown(121, 15), /no está configurada/)
+
+const invoicePdfContent = buildInvoicePdf({
+  voucher: {
+    voucherTypeDescription: 'Factura A',
+    formattedNumber: '0003-00000030',
+    pointOfSale: 3,
+    amount: 140795,
+    netAmount: 116359,
+    vatAmount: 24435,
+    vatRate: 21,
+  },
+  buyer: { name: 'ABRAFER SRL', documentType: 'CUIT', documentNumber: '30681599793' },
+  saleSnapshot: {
+    items: [{
+      code: 'CR30',
+      title: '30 A / cargador 12V',
+      quantity: 1,
+      vatRate: 21,
+      discountLabel: '30%',
+      listNetUnitPrice: 166228,
+      netUnitPrice: 116359,
+      netSubtotal: 116359,
+      unitPrice: 140795,
+      subtotal: 140795,
+    }],
+  },
+}).toString('latin1')
+
+const invoiceColumnLabels = ['(CODIGO)', '(PRODUCTO)', '(PRECIO NETO)', '(DESCUENTO)', '(CANTIDAD)', '(SUBTOTAL)', '(IVA)', '(CON IVA)']
+let previousInvoiceColumn = -1
+invoiceColumnLabels.forEach((label) => {
+  const position = invoicePdfContent.indexOf(label, previousInvoiceColumn + 1)
+  assert.ok(position > previousInvoiceColumn, `La columna ${label} debe conservar el orden fiscal solicitado`)
+  previousInvoiceColumn = position
+})
+assert.match(invoicePdfContent, /\(30%\)/)
+assert.match(invoicePdfContent, /\(CR30\)/)
 
 const facturaA = {
   cae: '123',
