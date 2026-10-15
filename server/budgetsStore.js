@@ -6,6 +6,7 @@ const dataDir = path.join(process.cwd(), 'server', 'data')
 const legacyStorePath = path.join(dataDir, 'budgets.json')
 const usersDir = path.join(dataDir, 'budget-users')
 const migrationPath = path.join(dataDir, 'budgets-migration.json')
+const accountUpdateQueues = new Map()
 
 const blankBrand = {
   id: '',
@@ -40,6 +41,22 @@ function identityKey(identity) {
 
 function accountStorePath(identity) {
   return path.join(usersDir, `${identityKey(identity)}.json`)
+}
+
+function withAccountUpdateLock(identity, operation) {
+  const key = identityKey(identity)
+  const previous = accountUpdateQueues.get(key) || Promise.resolve()
+  const current = previous
+    .catch(() => undefined)
+    .then(operation)
+
+  accountUpdateQueues.set(key, current)
+
+  return current.finally(() => {
+    if (accountUpdateQueues.get(key) === current) {
+      accountUpdateQueues.delete(key)
+    }
+  })
 }
 
 function normalizeBrand(brand = {}, fallbackId = '') {
@@ -186,15 +203,21 @@ export async function readBudgetsStore(identity) {
   }
 }
 
-export async function writeBudgetsStore(identity, nextStore) {
+async function writeBudgetsStoreUnlocked(identity, nextStore) {
   const targetPath = await ensureAccountStore(identity)
   const normalized = migrateStore(nextStore)
   await writeJsonAtomic(targetPath, normalized)
   return normalized
 }
 
+export async function writeBudgetsStore(identity, nextStore) {
+  return withAccountUpdateLock(identity, () => writeBudgetsStoreUnlocked(identity, nextStore))
+}
+
 export async function updateBudgetsStore(identity, updater) {
-  const current = await readBudgetsStore(identity)
-  const next = await updater(current)
-  return writeBudgetsStore(identity, next)
+  return withAccountUpdateLock(identity, async () => {
+    const current = await readBudgetsStore(identity)
+    const next = await updater(current)
+    return writeBudgetsStoreUnlocked(identity, next)
+  })
 }
