@@ -166,7 +166,7 @@ function Preview({ brand, client, items, number, draft = false, documentType = '
         <div className={`budget-paper-row heading ${isInvoice ? 'invoice' : ''}`}>
           {isInvoice
             ? <><span>Código</span><span>Producto</span><span>Neto s/IVA</span><span>Desc.</span><span>IVA</span><span>Precio c/IVA</span><span>Cant.</span><span>Subtotal</span></>
-            : <><span>Código</span><span>Producto</span><span>Precio</span><span>Desc.</span><span>Precio neto</span><span>Cant.</span><span>Subtotal</span></>}
+            : <><span>Código</span><span>Producto</span><span>Precio</span><span>Desc.</span><span>Precio final</span><span>Cant.</span><span>Subtotal</span></>}
         </div>
         {items.length ? items.map((item) => (
           <div className={`budget-paper-row ${isInvoice ? 'invoice' : ''}`} key={item.rowId}>
@@ -186,7 +186,7 @@ function Preview({ brand, client, items, number, draft = false, documentType = '
 
       <footer className="budget-paper-footer">
         <div><span>Validez</span><strong>{brand.validity || '10 días'}</strong><small>{brand.conditions || 'Precios sujetos a disponibilidad.'}</small></div>
-        <div className="budget-paper-total"><span>TOTAL</span><strong>{formatCurrency(total)}</strong><small>{isInvoice ? 'Importe final con IVA incluido' : 'Importe final sin desglose de IVA'}</small></div>
+        <div className="budget-paper-total"><span>TOTAL</span><strong>{formatCurrency(total)}</strong><small>{isInvoice ? 'Importe final con IVA incluido' : 'Presupuesto sin IVA'}</small></div>
       </footer>
     </div>
   )
@@ -900,14 +900,20 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
     setClientDraft({ ...updatedClient })
     localStorage.setItem(CLIENTS_KEY, JSON.stringify(nextClients))
 
-    setItems((current) => current.map((item) => ({
-      ...item,
-      discountLabel: parsedDiscount.label,
-      discountFactor: parsedDiscount.factor,
-      netDiscountedPrice: item.price * parsedDiscount.factor,
-      discountedPrice: item.price * parsedDiscount.factor * (1 + numberValue(item.vatRate, 21) / 100),
-      subtotal: item.price * parsedDiscount.factor * (1 + numberValue(item.vatRate, 21) / 100) * item.quantity,
-    })))
+    setItems((current) => current.map((item) => {
+      const netDiscountedPrice = item.price * parsedDiscount.factor
+      const discountedPrice = invoiceMode
+        ? netDiscountedPrice * (1 + numberValue(item.vatRate, 21) / 100)
+        : netDiscountedPrice
+      return {
+        ...item,
+        discountLabel: parsedDiscount.label,
+        discountFactor: parsedDiscount.factor,
+        netDiscountedPrice,
+        discountedPrice,
+        subtotal: discountedPrice * item.quantity,
+      }
+    }))
     setNotice('Los datos del cliente se guardaron correctamente.')
   }
 
@@ -922,6 +928,7 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
     setItems((current) => {
       const existing = current.find((item) => item.code === product.code)
       if (existing) return current.map((item) => item.code === product.code ? { ...item, quantity: item.quantity + 1, subtotal: item.discountedPrice * (item.quantity + 1) } : item)
+      const documentPrice = invoiceMode ? pricing.discountedPrice : pricing.netDiscountedPrice
       return [...current, {
         ...product,
         ...pricing,
@@ -930,7 +937,8 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
         discountLabel: discount.label,
         discountFactor: discount.factor,
         quantity: 1,
-        subtotal: pricing.discountedPrice,
+        discountedPrice: documentPrice,
+        subtotal: documentPrice,
       }]
     })
     setProductQuery('')
@@ -1033,7 +1041,9 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
         const parsed = parseDiscount(value)
         next.discountFactor = parsed.factor
         next.netDiscountedPrice = next.price * parsed.factor
-        next.discountedPrice = next.netDiscountedPrice * (1 + numberValue(next.vatRate, 21) / 100)
+        next.discountedPrice = invoiceMode
+          ? next.netDiscountedPrice * (1 + numberValue(next.vatRate, 21) / 100)
+          : next.netDiscountedPrice
       }
       if (field === 'vatRate') {
         next.vatRate = numberValue(value, 21)
@@ -1043,6 +1053,7 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
       if (field === 'profitRate' && next.currency === 'USD') {
         const pricing = calculateProductPricing(next, { fxSale: next.fxSale || fx.sell, profit: numberValue(value), discountFactor: next.discountFactor })
         Object.assign(next, pricing, { price: pricing.commercialNetPrice })
+        if (!invoiceMode) next.discountedPrice = pricing.netDiscountedPrice
       }
       next.subtotal = next.discountedPrice * next.quantity
       return next
@@ -1162,7 +1173,7 @@ function Budgets({ mode = 'budget', onShowInvoiceHistory }) {
                   {item.currency === 'USD' && <label className="internal-price"><span>Ganancia</span><input type="number" min="0" step="0.1" value={item.profitRate} onChange={(event) => updateItem(item.rowId, 'profitRate', event.target.value)} /></label>}
                   <label><span>Precio</span><strong>{formatCurrency(item.price)}</strong></label>
                   <label><span>Descuento</span><input value={item.discountLabel} onChange={(event) => updateItem(item.rowId, 'discountLabel', event.target.value)} /></label>
-                  <label><span>Precio neto</span><strong>{formatCurrency(item.netDiscountedPrice ?? (item.discountedPrice / (1 + numberValue(item.vatRate, 21) / 100)))}</strong></label>
+                  <label><span>{invoiceMode ? 'Precio neto' : 'Precio final'}</span><strong>{formatCurrency(invoiceMode ? (item.netDiscountedPrice ?? (item.discountedPrice / (1 + numberValue(item.vatRate, 21) / 100))) : item.discountedPrice)}</strong></label>
                   {invoiceMode && <label><span>IVA</span><select value={numberValue(item.vatRate, 21)} onChange={(event) => updateItem(item.rowId, 'vatRate', event.target.value)}><option value="21">21%</option><option value="10.5">10,5%</option></select></label>}
                   {invoiceMode && <label><span>Precio c/IVA</span><strong>{formatCurrency(item.discountedPrice)}</strong></label>}
                   <label><span>Cantidad</span><input type="number" min="1" value={item.quantity} onChange={(event) => updateItem(item.rowId, 'quantity', event.target.value)} /></label>
